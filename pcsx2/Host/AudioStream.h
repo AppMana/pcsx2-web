@@ -96,6 +96,9 @@ public:
 		const char* driver_name, const char* device_name, bool stretch_enabled, Error* error = nullptr);
 	static std::unique_ptr<AudioStream> CreateNullStream(u32 sample_rate, u32 buffer_ms);
 
+	using NullStreamFactory = std::unique_ptr<AudioStream> (*)(u32 sample_rate, u32 buffer_ms);
+	static void SetNullStreamFactory(NullStreamFactory factory);
+
 protected:
 	enum ReadChannel : u8
 	{

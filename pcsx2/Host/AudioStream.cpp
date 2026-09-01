@@ -59,8 +59,18 @@ AudioStream::~AudioStream()
 	DestroyBuffer();
 }
 
+static AudioStream::NullStreamFactory s_null_stream_factory = nullptr;
+
+void AudioStream::SetNullStreamFactory(NullStreamFactory factory)
+{
+	s_null_stream_factory = factory;
+}
+
 std::unique_ptr<AudioStream> AudioStream::CreateNullStream(u32 sample_rate, u32 buffer_ms)
 {
+	if (s_null_stream_factory)
+		return s_null_stream_factory(sample_rate, buffer_ms);
+
 	// no point stretching with no output
 	AudioStreamParameters params;
 	params.expansion_mode = AudioExpansionMode::Disabled;
