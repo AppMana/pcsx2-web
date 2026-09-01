@@ -70,6 +70,13 @@ else()
 	add_subdirectory(pcsx2-gsrunner EXCLUDE_FROM_ALL)
 endif()
 
+# tracerunner
+if(ENABLE_TRACERUNNER)
+	add_subdirectory(pcsx2-tracerunner)
+else()
+	add_subdirectory(pcsx2-tracerunner EXCLUDE_FROM_ALL)
+endif()
+
 #-------------------------------------------------------------------------------
 if(NOT IS_SUPPORTED_COMPILER)
 	message(WARNING "
