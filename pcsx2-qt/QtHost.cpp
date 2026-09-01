@@ -944,6 +944,10 @@ void Host::OnVMStarted()
 	emit g_emu_thread->onVMStarted();
 }
 
+void Host::OnVSyncTrace()
+{
+}
+
 void Host::OnVMDestroyed()
 {
 	emit g_emu_thread->onVMStopped();

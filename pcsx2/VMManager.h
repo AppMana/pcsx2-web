@@ -379,4 +379,7 @@ namespace Host
 
 	/// Provided by the host; called once per frame at guest vsync.
 	void PumpMessagesOnCPUThread();
+
+	/// Provided by the host; called once per frame after input recording has advanced.
+	void OnVSyncTrace();
 } // namespace Host

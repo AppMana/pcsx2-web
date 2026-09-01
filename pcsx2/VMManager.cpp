@@ -2943,6 +2943,8 @@ void VMManager::Internal::PollInputOnCPUThread()
 		// so we can either read from it, or overwrite it!
 		g_InputRecording.handleControllerDataUpdate();
 	}
+
+	Host::OnVSyncTrace();
 }
 
 void VMManager::CheckForCPUConfigChanges(const Pcsx2Config& old_config)

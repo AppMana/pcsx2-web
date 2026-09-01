@@ -325,6 +325,10 @@ void Host::OnVMStarted()
 {
 }
 
+void Host::OnVSyncTrace()
+{
+}
+
 void Host::OnVMDestroyed()
 {
 }
