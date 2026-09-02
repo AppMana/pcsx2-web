@@ -21,7 +21,12 @@ static int branch2 = 0;
 static u32 cpuBlockCycles = 0;		// 3 bit fixed point version of cycle count
 static std::string disOut;
 static bool intExitExecution = false;
+#ifdef ARCH_WASM32
+static bool intCancelPending = false;
+static bool intExitPending = false;
+#else
 static fastjmp_buf intJmpBuf;
+#endif
 static u32 intLastBranchTo;
 
 void intEventTest();
@@ -221,6 +226,11 @@ static __fi void _doBranch_shared(u32 tar)
 	branch2 = cpuRegs.branch = 1;
 	execI();
 
+#ifdef ARCH_WASM32
+	if (intCancelPending || intExitPending)
+		return;
+#endif
+
 	// branch being 0 means an exception was thrown, since only the exception
 	// handler should ever clear it.
 
@@ -267,6 +277,10 @@ static __fi void _doBranch_shared(u32 tar)
 static void doBranch( u32 target )
 {
 	_doBranch_shared( target );
+#ifdef ARCH_WASM32
+	if (intCancelPending || intExitPending)
+		return;
+#endif
 	intUpdateCPUCycles();
 	intEventTest();
 }
@@ -275,6 +289,10 @@ void intDoBranch(u32 target)
 {
 	//Console.WriteLn("Interpreter Branch ");
 	_doBranch_shared( target );
+#ifdef ARCH_WASM32
+	if (intCancelPending || intExitPending)
+		return;
+#endif
 
 	if( Cpu == &intCpu )
 	{
@@ -563,7 +581,11 @@ void intEventTest()
 		intExitExecution = false;
 		if (CHECK_EEREC)
 			writebackCache();
+#ifdef ARCH_WASM32
+		intExitPending = true;
+#else
 		fastjmp_jmp(&intJmpBuf, 1);
+#endif
 	}
 }
 
@@ -577,22 +599,58 @@ static void intSafeExitExecution()
 	{
 		if (CHECK_EEREC)
 			writebackCache();
+#ifdef ARCH_WASM32
+		intExitPending = true;
+#else
 		fastjmp_jmp(&intJmpBuf, 1);
+#endif
 	}
 }
 
 static void intCancelInstruction()
 {
 	// See execute function.
+#ifdef ARCH_WASM32
+	intCancelPending = true;
+#else
 	fastjmp_jmp(&intJmpBuf, 0);
+#endif
 }
+
+#ifdef ARCH_WASM32
+// Flag equivalents of the fastjmp exits: a cancel restarts the outer loop, an exit returns.
+#define INT_CHECK_PENDING() \
+	do \
+	{ \
+		if (intCancelPending) \
+		{ \
+			intCancelPending = false; \
+			break; \
+		} \
+		if (intExitPending) \
+		{ \
+			intExitPending = false; \
+			return; \
+		} \
+	} while (0)
+#else
+#define INT_CHECK_PENDING() \
+	do \
+	{ \
+	} while (0)
+#endif
 
 static void intExecute()
 {
+#ifdef ARCH_WASM32
+	intCancelPending = false;
+	intExitPending = false;
+#else
 	// This will come back as zero the first time it runs, or on instruction cancel.
 	// It will come back as nonzero when we exit execution.
 	if (fastjmp_set(&intJmpBuf) != 0)
 		return;
+#endif
 
 	for (;;)
 	{
@@ -606,6 +664,7 @@ static void intExecute()
 			while (true)
 			{
 				execI();
+				INT_CHECK_PENDING();
 
 				if (cpuRegs.pc == EELOAD_START)
 				{
@@ -652,10 +711,15 @@ static void intExecute()
 		else
 		{
 			while (true)
+			{
 				execI();
+				INT_CHECK_PENDING();
+			}
 		}
 	}
 }
+
+#undef INT_CHECK_PENDING
 
 static void intStep()
 {
