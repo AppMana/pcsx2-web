@@ -8,7 +8,20 @@
 #include "ScopedGuard.h"
 #include "StringUtil.h"
 
+#ifndef ARCH_WASM32
 #include <common/FastJmp.h>
+#else
+#include <csetjmp>
+struct fastjmp_buf
+{
+	jmp_buf buf;
+};
+#define fastjmp_set(b) setjmp((b)->buf)
+[[noreturn]] static void fastjmp_jmp(const fastjmp_buf* b, int ret)
+{
+	longjmp(const_cast<fastjmp_buf*>(b)->buf, ret);
+}
+#endif
 #include <jpeglib.h>
 #include <png.h>
 #include <webp/decode.h>

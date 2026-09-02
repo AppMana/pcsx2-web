@@ -13,7 +13,7 @@ static u32 PAUSE_TIME = 0;
 
 static void MultiPause()
 {
-#ifdef ARCH_X86
+#if defined(ARCH_X86) || defined(ARCH_WASM32)
 	_mm_pause();
 	_mm_pause();
 	_mm_pause();
