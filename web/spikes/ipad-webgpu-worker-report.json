@@ -1,0 +1,112 @@
+{
+  "device": {
+    "deviceId": "00008132-000E48EC0A85001C",
+    "deviceName": "Benjamin’s iPad",
+    "deviceOSVersion": "26.5.2",
+    "url": "127.0.0.1:9222"
+  },
+  "page": "https://rpcs3.appmana.com/runtime.html?device=1788303745220",
+  "main": {
+    "crossOriginIsolated": true,
+    "gpuOnMain": true,
+    "sab": true,
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5.2 Safari/605.1.15",
+    "hw": 8
+  },
+  "worker": {
+    "gpuInWorker": true,
+    "offscreenCanvas": true,
+    "adapter": true,
+    "features": [
+      "depth-clip-control",
+      "depth32float-stencil8",
+      "timestamp-query",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "texture-compression-etc2",
+      "texture-compression-astc",
+      "texture-compression-astc-sliced-3d",
+      "indirect-first-instance",
+      "shader-f16",
+      "rg11b10ufloat-renderable",
+      "bgra8unorm-storage",
+      "float32-filterable",
+      "float32-blendable",
+      "float16-renderable",
+      "float32-renderable",
+      "core-features-and-limits",
+      "texture-formats-tier1"
+    ],
+    "info": {
+      "vendor": "apple",
+      "architecture": "apple",
+      "device": "apple"
+    },
+    "context": true,
+    "rendered": true,
+    "waitResult": "timed-out",
+    "blockedMs": 3005
+  },
+  "samplesDuringBlock": [
+    {
+      "tMs": 500,
+      "rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "workerDone": false
+    },
+    {
+      "tMs": 1000,
+      "rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "workerDone": false
+    },
+    {
+      "tMs": 1500,
+      "rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "workerDone": false
+    },
+    {
+      "tMs": 2000,
+      "rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "workerDone": false
+    },
+    {
+      "tMs": 2500,
+      "rgba": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "workerDone": false
+    }
+  ],
+  "sampleAfter": {
+    "rgba": [
+      0,
+      255,
+      0,
+      255
+    ],
+    "workerDone": true
+  },
+  "snapshotPixel": "saved ipad-webgpu-worker-during-block.png"
+}

@@ -1,0 +1,32 @@
+{
+  "device": {
+    "deviceId": "00008132-000E48EC0A85001C",
+    "deviceName": "Benjamin’s iPad",
+    "deviceOSVersion": "26.5.2",
+    "url": "127.0.0.1:9222"
+  },
+  "page": "https://rpcs3.appmana.com/storage.html?fresh=1",
+  "main": {
+    "crossOriginIsolated": true,
+    "waitAsyncOnMain": "function",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5.2 Safari/605.1.15"
+  },
+  "worker": {
+    "syncModuleInWorker": 7,
+    "syncCompileMs": 0.46,
+    "tailCallValidate": true,
+    "tailCallResult": 9,
+    "simdValidate": true,
+    "exnrefValidate": true,
+    "memory64Validate": false,
+    "waitAsyncType": "function",
+    "waitAsyncIsAsync": true,
+    "waitAsyncValue": "ok",
+    "waitAsyncWakeMs": 301.6,
+    "hardwareConcurrency": 8,
+    "shared256M": "ok",
+    "shared1G": "ok",
+    "shared2G": "RangeError: Out of memory",
+    "shared4G": "RangeError: Out of memory"
+  }
+}
