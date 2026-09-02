@@ -9,6 +9,11 @@
 #include "common/RedtapeWindows.h"
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/atomic.h>
+#include <cmath>
+#endif
+
 #include <limits>
 
 // --------------------------------------------------------------------------------------
@@ -136,6 +141,53 @@ void Threading::WorkSema::Reset()
 {
 	m_state = STATE_RUNNING_0;
 }
+
+#ifdef __EMSCRIPTEN__
+
+bool Threading::WorkSema::WaitForWorkAsync(AsyncWaitCallback callback, void* userdata)
+{
+	s32 value = m_state.load(std::memory_order_relaxed);
+	pxAssert(!IsDead(value));
+	m_async_callback = callback;
+	m_async_userdata = userdata;
+	m_async_waiter.store(true, std::memory_order_relaxed);
+	while (!m_state.compare_exchange_weak(value, NextStateWaitForWork(value), std::memory_order_acq_rel, std::memory_order_relaxed))
+		;
+	if (!IsReadyForSleep(value))
+	{
+		m_async_waiter.store(false, std::memory_order_relaxed);
+		return true;
+	}
+
+	if (value & STATE_FLAG_WAITING_EMPTY)
+		m_empty_sema.Post();
+
+	const ATOMICS_WAIT_TOKEN_T token = emscripten_atomic_wait_async(reinterpret_cast<volatile void*>(&m_state),
+		static_cast<uint32_t>(STATE_SLEEPING), &WorkSema::AsyncWaitFinished, this, INFINITY);
+	if (!EMSCRIPTEN_IS_VALID_WAIT_TOKEN(token))
+	{
+		m_async_waiter.store(false, std::memory_order_relaxed);
+		m_state.fetch_and(STATE_FLAG_WAITING_EMPTY, std::memory_order_acquire);
+		return true;
+	}
+
+	return false;
+}
+
+void Threading::WorkSema::AsyncWaitFinished(int32_t* address, uint32_t value, int result, void* userdata)
+{
+	WorkSema* const self = static_cast<WorkSema*>(userdata);
+	self->m_async_waiter.store(false, std::memory_order_relaxed);
+	self->m_state.fetch_and(STATE_FLAG_WAITING_EMPTY, std::memory_order_acquire);
+	self->m_async_callback(self->m_async_userdata);
+}
+
+void Threading::WorkSema::NotifyAsyncWaiter()
+{
+	emscripten_atomic_notify(reinterpret_cast<void*>(&m_state), 1);
+}
+
+#endif
 
 #if !defined(__APPLE__) // macOS implementations are in DarwinThreads
 

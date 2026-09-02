@@ -196,9 +196,20 @@ namespace Threading
 			// SLEEPING: Change state to RUNNING and wake worker.  Thread will wake up and process the new data.
 			// RUNNING_0: Change state to RUNNING_N.
 			// RUNNING_N: Stay in RUNNING_N
+#ifdef __EMSCRIPTEN__
+			s32 old = m_state.fetch_add(2, std::memory_order_acq_rel);
+			if (old == STATE_SLEEPING)
+			{
+				if (m_async_waiter.load(std::memory_order_relaxed))
+					NotifyAsyncWaiter();
+				else
+					m_sema.Post();
+			}
+#else
 			s32 old = m_state.fetch_add(2, std::memory_order_release);
 			if (old == STATE_SLEEPING)
 				m_sema.Post();
+#endif
 		}
 
 		/// Checks if there's any work in the queue
@@ -219,6 +230,24 @@ namespace Threading
 		/// Reset the semaphore to the initial state
 		/// Should be called by the worker thread if it restarts after dying
 		void Reset();
+
+#ifdef __EMSCRIPTEN__
+		using AsyncWaitCallback = void (*)(void* userdata);
+
+		/// Event-loop variant of WaitForWork() for a worker that must not block its thread.
+		/// Performs the same state transition; returns true when work is already queued and
+		/// the caller should process it now, or false when the callback has been registered
+		/// (via Atomics.waitAsync on m_state) to run on this thread once NotifyOfWork() fires.
+		bool WaitForWorkAsync(AsyncWaitCallback callback, void* userdata);
+
+	private:
+		static void AsyncWaitFinished(int32_t* address, uint32_t value, int result, void* userdata);
+		void NotifyAsyncWaiter();
+
+		std::atomic<bool> m_async_waiter{false};
+		AsyncWaitCallback m_async_callback = nullptr;
+		void* m_async_userdata = nullptr;
+#endif
 	};
 
 	/// A semaphore that definitely has a fast userspace path
