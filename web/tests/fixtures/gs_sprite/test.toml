@@ -1,0 +1,29 @@
+target = "gs_sprite.elf"
+frames = 240
+bios = true
+renderer = ["sw", "webgpu"]
+cpu = "interpreter"
+input = ""
+known_failure = false
+filter = "^[A-Z][A-Z0-9_]*(=.*)?$"
+
+[trace]
+tty = true
+cpu = true
+ram_every = 60
+
+[compare.tty]
+mode = "exact"
+
+[compare.cpu]
+mode = "exact"
+
+[compare.frames]
+mode = "md5"
+trigger = [60, 120, 240]
+
+[compare.frames.webgpu]
+mode = "rmse"
+max_rmse = 1.0
+min_close_pixels = 0.99
+trigger = [60, 120, 240]
