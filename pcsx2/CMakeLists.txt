@@ -381,7 +381,6 @@ set(pcsx2USBSources
 	USB/usb-eyetoy/usb-eyetoy-webcam.cpp
 	USB/usb-hid/usb-hid.cpp
 	USB/usb-lightgun/guncon2.cpp
-	USB/usb-mic/audiodev-cubeb.cpp
 	USB/usb-mic/usb-headset.cpp
 	USB/usb-mic/usb-mic.cpp
 	USB/usb-msd/usb-msd.cpp
@@ -390,7 +389,6 @@ set(pcsx2USBSources
 	USB/usb-pad/usb-gametrak.cpp
 	USB/usb-pad/usb-realplay.cpp
 	USB/usb-pad/usb-pad-ff.cpp
-	USB/usb-pad/usb-pad-sdl-ff.cpp
 	USB/usb-pad/usb-pad.cpp
 	USB/usb-pad/usb-seamic.cpp
 	USB/usb-pad/usb-train.cpp
@@ -398,6 +396,13 @@ set(pcsx2USBSources
 	USB/usb-pad/usb-turntable.cpp
 	USB/usb-printer/usb-printer.cpp
 )
+
+if(NOT ARCH_WASM32)
+	list(APPEND pcsx2USBSources
+		USB/usb-mic/audiodev-cubeb.cpp
+		USB/usb-pad/usb-pad-sdl-ff.cpp
+	)
+endif()
 
 # USB headers
 set(pcsx2USBHeaders
@@ -480,11 +485,12 @@ elseif(ARCH_ARM64)
 		GS/Renderers/SW/GSDrawScanlineCodeGenerator.arm64.cpp
 		GS/Renderers/SW/GSSetupPrimCodeGenerator.arm64.cpp
 	)
+elseif(ARCH_WASM32)
+	# No code generators: GSDrawScanline uses the C++ scanline path.
 endif()
 
 set(pcsx2GSSources
 	GS/GS.cpp
-	GS/GSCapture.cpp
 	GS/GSClut.cpp
 	GS/GSDrawingContext.cpp
 	GS/GSDrawingEnvironment.cpp
@@ -577,6 +583,18 @@ elseif(ARCH_ARM64)
 		GS/GSVector4_arm64.h
 		GS/GSVector4i_arm64.h
 	)
+elseif(ARCH_WASM32)
+	list(APPEND pcsx2GSHeaders
+		GS/GSVector4.h
+		GS/GSVector4i.h
+		wasm/GSCodeGeneratorStubs.h
+	)
+endif()
+
+if(ARCH_WASM32)
+	list(APPEND pcsx2GSSources wasm/GSCaptureStub.cpp)
+else()
+	list(APPEND pcsx2GSSources GS/GSCapture.cpp)
 endif()
 
 if(USE_OPENGL)
@@ -828,9 +846,14 @@ set(pcsx2DebugToolsHeaders
 	DebugTools/BiosDebugData.h)
 
 set(pcsx2HostSources
-	Host/AudioStream.cpp
-	Host/CubebAudioStream.cpp
-	Host/SDLAudioStream.cpp)
+	Host/AudioStream.cpp)
+if(ARCH_WASM32)
+	list(APPEND pcsx2HostSources wasm/WasmAudioStream.cpp)
+else()
+	list(APPEND pcsx2HostSources
+		Host/CubebAudioStream.cpp
+		Host/SDLAudioStream.cpp)
+endif()
 
 set(pcsx2HostHeaders
 	Host/AudioStream.h
@@ -856,13 +879,18 @@ set(pcsx2ImGuiHeaders
 set(pcsx2InputSources
 	Input/InputManager.cpp
 	Input/InputSource.cpp
-	Input/SDLInputSource.cpp
 )
 set(pcsx2InputHeaders
 	Input/InputManager.h
 	Input/InputSource.h
-	Input/SDLInputSource.h
 )
+if(ARCH_WASM32)
+	list(APPEND pcsx2InputSources wasm/WasmInputSource.cpp)
+	list(APPEND pcsx2InputHeaders wasm/WasmInputSource.h)
+else()
+	list(APPEND pcsx2InputSources Input/SDLInputSource.cpp)
+	list(APPEND pcsx2InputHeaders Input/SDLInputSource.h)
+endif()
 
 if(APPLE)
 	list(APPEND pcsx2GSSources
@@ -1060,6 +1088,13 @@ set(pcsx2arm64Headers
 	arm64/AsmHelpers.h
 )
 
+# wasm32 (interpreter only)
+set(pcsx2wasmSources
+	wasm/CDVDdiscStub.cpp
+	wasm/RecStubs.cpp
+	wasm/Vif_UnpackC.cpp
+	)
+
 # These ones benefit a lot from LTO
 set(pcsx2LTOSources
 	${pcsx2Sources}
@@ -1078,6 +1113,8 @@ if(ARCH_X86)
 elseif(ARCH_ARM64)
 	list(APPEND pcsx2LTOSources ${pcsx2arm64Sources} ${pcsx2arm64Headers})
 	target_link_libraries(PCSX2_FLAGS INTERFACE vixl)
+elseif(ARCH_WASM32)
+	list(APPEND pcsx2LTOSources ${pcsx2wasmSources})
 endif()
 
 if(LTO_PCSX2_CORE)
@@ -1153,13 +1190,11 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	libchdr
 	libzip::zip
 	cpuinfo
-	cubeb
 	rcheevos
 	discord-rpc
 	simpleini
 	freesurround
 	Freetype::Freetype
-	SDL3::SDL3
 	ZLIB::ZLIB
 	LZ4::LZ4
 	SoundTouch::SoundTouch
@@ -1172,6 +1207,13 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	plutosvg::plutosvg
 	${LIBC_LIBRARIES}
 )
+
+if(NOT PCSX2_WEB)
+	target_link_libraries(PCSX2_FLAGS INTERFACE
+		cubeb
+		SDL3::SDL3
+	)
+endif()
 
 if(WIN32)
 	target_link_libraries(PCSX2_FLAGS INTERFACE

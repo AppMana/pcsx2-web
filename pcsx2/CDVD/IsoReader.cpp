@@ -293,7 +293,9 @@ bool IsoReader::ReadFile(const ISODirectoryEntry& de, std::vector<u8>* data, Err
 		return true;
 	}
 
+#ifndef ARCH_WASM32
 	static_assert(sizeof(size_t) == sizeof(u64));
+#endif
 	const u32 num_sectors = (de.length_le + (SECTOR_SIZE - 1)) / SECTOR_SIZE;
 	data->resize(num_sectors * static_cast<u64>(SECTOR_SIZE));
 	for (u32 i = 0, lsn = de.location_le; i < num_sectors; i++, lsn++)

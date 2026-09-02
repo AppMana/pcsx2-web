@@ -7,6 +7,12 @@
 
 set(PCSX2_WEB_DEPS_DIR "${CMAKE_BINARY_DIR}/_deps" CACHE PATH "Where pinned dependency tarballs are unpacked")
 
+# check_type_size() cannot read sizes back out of wasm objects; libzip needs these.
+set(HAVE_SIZEOF_OFF_T TRUE CACHE INTERNAL "")
+set(SIZEOF_OFF_T 8 CACHE INTERNAL "")
+set(HAVE_SIZEOF_SIZE_T TRUE CACHE INTERNAL "")
+set(SIZEOF_SIZE_T 4 CACHE INTERNAL "")
+
 function(pcsx2_web_tarball name url sha256 outvar)
 	set(archive "${PCSX2_WEB_DEPS_DIR}/${name}.tar.gz")
 	set(stamp "${PCSX2_WEB_DEPS_DIR}/${name}.extracted")
@@ -99,7 +105,10 @@ pcsx2_web_tarball(plutosvg-0.0.7
 set(PLUTOVG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(PLUTOSVG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(PLUTOSVG_ENABLE_FREETYPE OFF CACHE BOOL "" FORCE)
-add_subdirectory("${PLUTOVG_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/plutovg" EXCLUDE_FROM_ALL)
+if(NOT IS_SYMLINK "${PLUTOSVG_SRC}/plutovg")
+	file(REMOVE_RECURSE "${PLUTOSVG_SRC}/plutovg")
+	file(CREATE_LINK "${PLUTOVG_SRC}" "${PLUTOSVG_SRC}/plutovg" SYMBOLIC)
+endif()
 add_subdirectory("${PLUTOSVG_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/plutosvg" EXCLUDE_FROM_ALL)
 
 # rapidyaml 0.12.1 (source tarball bundles c4core)

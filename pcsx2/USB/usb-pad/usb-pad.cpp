@@ -5,7 +5,9 @@
 #include "IconsFontAwesome.h"
 #include "IconsPromptFont.h"
 #include "USB/qemu-usb/USBinternal.h"
+#ifndef ARCH_WASM32
 #include "USB/usb-pad/usb-pad-sdl-ff.h"
+#endif
 #include "USB/USB.h"
 #include "Host.h"
 #include "StateWrapper.h"
@@ -606,7 +608,9 @@ namespace usb_pad
 			return;
 
 		mFFdev.reset();
+#ifndef ARCH_WASM32
 		mFFdev = SDLFFDevice::Create(mFFdevName);
+#endif
 	}
 
 	static void pad_handle_data(USBDevice* dev, USBPacket* p)
