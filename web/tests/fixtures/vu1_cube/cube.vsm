@@ -1,0 +1,74 @@
+; vu1_cube microprogram, adapted from ps2sdk samples/draw/vu1/draw_3D.vsm.
+; Assembled with dvp-as (upper instruction | lower instruction per line).
+;
+; VU memory layout
+;   qword 0..3            local to GS matrix, column major (not double buffered)
+;   TOP+0                 scale xyz (float), w = vertex count (int)
+;   TOP+1                 offset xyzw (float)
+;   TOP+2                 GIF tag for the triangles (EOP=0, PRE=1, NREG=2)
+;   TOP+3                 GIF tag for the FINISH write (EOP=1, A+D)
+;   TOP+4                 FINISH register data
+;   TOP+5 ..              vertices (count qwords)
+;   TOP+5+count ..        colours (count qwords, R G B A as ints)
+;   TOP+5+2*count ..      XGKICK buffer: tag, then RGBAQ/XYZ2 per vertex,
+;                         then the FINISH tag and data
+;
+; Integer registers are only read by branches several instructions after
+; they were written, and Q is only read seven cycles after DIV.
+
+        .vu
+        .align 4
+        .global VU1Cube_CodeStart
+        .global VU1Cube_CodeEnd
+VU1Cube_CodeStart:
+        NOP                                 lq            VF01, 0(VI00)
+        NOP                                 lq            VF02, 1(VI00)
+        NOP                                 lq            VF03, 2(VI00)
+        NOP                                 lq            VF04, 3(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 fcset         0
+        NOP                                 NOP
+        NOP                                 lq.xyz        VF05, 0(VI02)
+        NOP                                 lq            VF09, 1(VI02)
+        NOP                                 ilw.w         VI07, 0(VI02)
+        NOP                                 lq            VF06, 2(VI02)
+        NOP                                 lq            VF10, 3(VI02)
+        NOP                                 lq            VF11, 4(VI02)
+        NOP                                 iaddiu        VI03, VI02, 5
+        NOP                                 iadd          VI04, VI03, VI07
+        NOP                                 iadd          VI05, VI04, VI07
+        NOP                                 iaddiu        VI06, VI05, 1
+        NOP                                 sq            VF06, 0(VI05)
+vertexLoop:
+        NOP                                 lq            VF07, 0(VI03)
+        NOP                                 lq            VF08, 0(VI04)
+        NOP                                 isubiu        VI07, VI07, 1
+        mulax         ACC, VF01, VF07x      NOP
+        madday        ACC, VF02, VF07y      NOP
+        maddaz        ACC, VF03, VF07z      NOP
+        maddw         VF07, VF04, VF07w     NOP
+        clipw.xyz     VF07xyz, VF07w        div           Q, VF00w, VF07w
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mulq.xyz      VF07, VF07, Q         fcand         VI01, 0x3ffff
+        mulaw.xyz     ACC, VF09, VF00w      iaddiu        VI01, VI01, 0x7fff
+        madd.xyz      VF07, VF07, VF05      sq            VF08, 0(VI06)
+        NOP                                 iaddiu        VI03, VI03, 1
+        ftoi4.xyz     VF07, VF07            iaddiu        VI04, VI04, 1
+        NOP                                 isw.w         VI01, 1(VI06)
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF07, 1(VI06)
+        NOP                                 ibne          VI07, VI00, vertexLoop
+        NOP                                 iaddiu        VI06, VI06, 2
+        NOP                                 sq            VF10, 0(VI06)
+        NOP                                 sq            VF11, 1(VI06)
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
+        .align 4
+VU1Cube_CodeEnd:
