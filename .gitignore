@@ -125,3 +125,6 @@ CMakeSettings.json
 /ci-artifacts/
 /out/
 /.cache/
+
+# PCSX2_WEB staged modules
+/web/public/core/
