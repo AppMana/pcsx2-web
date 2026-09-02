@@ -1331,6 +1331,7 @@ bool vtlb_Core_Alloc()
 
 	vtlbdata.vmap = reinterpret_cast<VTLBVirtual*>(SysMemory::GetVTLBVirtualMap());
 
+#ifndef ARCH_WASM32
 	pxAssert(!s_fastmem_area);
 	s_fastmem_area = SharedMemoryMappingArea::Create(FASTMEM_AREA_SIZE);
 	if (!s_fastmem_area)
@@ -1350,6 +1351,7 @@ bool vtlb_Core_Alloc()
 		Host::ReportErrorAsync("Failed to install page fault handler.", error.GetDescription());
 		return false;
 	}
+#endif
 
 	return true;
 }
@@ -1444,7 +1446,11 @@ vtlb_ProtectionMode mmap_GetRamPageInfo(u32 paddr)
 
 	rampage >>= __pageshift;
 
+#ifdef ARCH_WASM32
+	return ProtMode_Manual;
+#else
 	return m_PageProtectInfo[rampage].Mode;
+#endif
 }
 
 // paddr - physically mapped PS2 address
@@ -1471,7 +1477,9 @@ void mmap_MarkCountedRamPage(u32 paddr)
 		paddr >> __pageshift);
 
 	m_PageProtectInfo[rampage].Mode = ProtMode_Write;
+#ifndef ARCH_WASM32
 	HostSys::MemProtect(&eeMem->Main[rampage << __pageshift], __pagesize, PageAccess_ReadOnly());
+#endif
 	vtlb_UpdateFastmemProtection(rampage << __pageshift, __pagesize, PageAccess_ReadOnly());
 }
 
@@ -1489,7 +1497,9 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	pxAssertMsg(m_PageProtectInfo[rampage].Mode != ProtMode_Manual,
 		"Attempted to clear a block that is already under manual protection.");
 
+#ifndef ARCH_WASM32
 	HostSys::MemProtect(&eeMem->Main[rampage << __pageshift], __pagesize, PageAccess_ReadWrite());
+#endif
 	vtlb_UpdateFastmemProtection(rampage << __pageshift, __pagesize, PageAccess_ReadWrite());
 	m_PageProtectInfo[rampage].Mode = ProtMode_Manual;
 	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
@@ -1542,7 +1552,9 @@ void mmap_ResetBlockTracking()
 {
 	//DbgCon.WriteLn( "vtlb/mmap: Block Tracking reset..." );
 	std::memset(m_PageProtectInfo, 0, sizeof(m_PageProtectInfo));
+#ifndef ARCH_WASM32
 	if (eeMem)
 		HostSys::MemProtect(eeMem->Main, Ps2MemSize::ExposedRam, PageAccess_ReadWrite());
+#endif
 	vtlb_UpdateFastmemProtection(0, Ps2MemSize::ExposedRam, PageAccess_ReadWrite());
 }
