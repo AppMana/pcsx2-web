@@ -11,6 +11,9 @@ find_package(Threads REQUIRED)
 # Avoid it by telling cmake to avoid finding frameworks while we search for libpng.
 set(FIND_FRAMEWORK_BACKUP ${CMAKE_FIND_FRAMEWORK})
 set(CMAKE_FIND_FRAMEWORK NEVER)
+if(PCSX2_WEB)
+	add_subdirectory(web/3rdparty EXCLUDE_FROM_ALL)
+else()
 find_package(PNG 1.6.40 REQUIRED)
 find_package(JPEG REQUIRED) # No version because flatpak uses libjpeg-turbo.
 find_package(ZLIB REQUIRED) # v1.3, but Mac uses the SDK version.
@@ -72,6 +75,7 @@ else()
 		pkg_check_modules(DBUS REQUIRED dbus-1)
 	endif()
 endif()
+endif()
 
 set(CMAKE_FIND_FRAMEWORK ${FIND_FRAMEWORK_BACKUP})
 
@@ -87,7 +91,9 @@ disable_compiler_warnings_for_target(cpuinfo)
 add_subdirectory(3rdparty/libzip EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/rcheevos EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/rapidjson EXCLUDE_FROM_ALL)
-add_subdirectory(3rdparty/discord-rpc EXCLUDE_FROM_ALL)
+if(NOT PCSX2_WEB)
+	add_subdirectory(3rdparty/discord-rpc EXCLUDE_FROM_ALL)
+endif()
 add_subdirectory(3rdparty/freesurround EXCLUDE_FROM_ALL)
 
 if(USE_OPENGL)
@@ -98,9 +104,11 @@ if(USE_VULKAN)
 	add_subdirectory(3rdparty/vulkan EXCLUDE_FROM_ALL)
 endif()
 
-add_subdirectory(3rdparty/cubeb EXCLUDE_FROM_ALL)
-disable_compiler_warnings_for_target(cubeb)
-disable_compiler_warnings_for_target(speex)
+if(NOT PCSX2_WEB)
+	add_subdirectory(3rdparty/cubeb EXCLUDE_FROM_ALL)
+	disable_compiler_warnings_for_target(cubeb)
+	disable_compiler_warnings_for_target(speex)
+endif()
 
 # Find the Qt components that we need.
 if(ENABLE_QT_UI)

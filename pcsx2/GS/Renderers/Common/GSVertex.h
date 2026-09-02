@@ -21,7 +21,7 @@ struct alignas(32) GSVertex
 			u32 FOG;        // FOG:28
 		};
 
-#if defined(ARCH_X86)
+#if defined(ARCH_X86) || defined(ARCH_WASM32)
 #if _M_SSE >= 0x500
 		__m256i mx;
 #endif

@@ -12,7 +12,9 @@
 #include "SIO/Pad/PadNotConnected.h"
 #include "SIO/Sio.h"
 
+#ifndef ARCH_WASM32
 #include "Input/SDLInputSource.h"
+#endif
 
 #include "IconsFontAwesome.h"
 
@@ -173,7 +175,9 @@ void Pad::SetDefaultControllerConfig(SettingsInterface& si)
 	si.SetBoolValue("Pad", "MultitapPort2", false);
 	si.SetFloatValue("Pad", "PointerXScale", 8.0f);
 	si.SetFloatValue("Pad", "PointerYScale", 8.0f);
+#ifndef ARCH_WASM32
 	SDLInputSource::ResetRGBForAllPlayers(si);
+#endif
 
 	// PCSX2 Controller Settings - Default pad types and parameters.
 	for (u32 i = 0; i < Pad::NUM_CONTROLLER_PORTS; i++)

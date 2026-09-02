@@ -2636,6 +2636,8 @@ std::string FileSystem::GetProgramPath()
 
 	buffer[cb] = '\0';
 	return buffer;
+#elif defined(__EMSCRIPTEN__)
+	return "/pcsx2/pcsx2-web";
 #else
 	return {};
 #endif

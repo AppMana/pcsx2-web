@@ -31,7 +31,9 @@
 #include "USB/usb-mic/usb-mic.h"
 #include "USB/usb-mic/audiodev.h"
 #include "USB/usb-mic/audiodev-noop.h"
+#ifndef ARCH_WASM32
 #include "USB/usb-mic/audiodev-cubeb.h"
+#endif
 #include "USB/usb-mic/audio.h"
 #include "USB/USB.h"
 #include "Host.h"
@@ -1292,6 +1294,25 @@ std::unique_ptr<AudioDevice> AudioDevice::CreateNoopDevice(AudioDir dir, u32 cha
 	return std::make_unique<usb_mic::audiodev_noop::NoopAudioDevice>(dir, channels);
 }
 
+#ifdef ARCH_WASM32
+
+std::unique_ptr<AudioDevice> AudioDevice::CreateDevice(AudioDir dir, u32 channels, std::string devname, s32 latency)
+{
+	return CreateNoopDevice(dir, channels);
+}
+
+std::vector<std::pair<std::string, std::string>> AudioDevice::GetInputDeviceList()
+{
+	return {};
+}
+
+std::vector<std::pair<std::string, std::string>> AudioDevice::GetOutputDeviceList()
+{
+	return {};
+}
+
+#else
+
 std::unique_ptr<AudioDevice> AudioDevice::CreateDevice(AudioDir dir, u32 channels, std::string devname, s32 latency)
 {
 	return std::make_unique<usb_mic::audiodev_cubeb::CubebAudioDevice>(dir, channels, std::move(devname), latency);
@@ -1306,3 +1327,5 @@ std::vector<std::pair<std::string, std::string>> AudioDevice::GetOutputDeviceLis
 {
 	return usb_mic::audiodev_cubeb::CubebAudioDevice::GetDeviceList(false);
 }
+
+#endif

@@ -13,6 +13,9 @@
 #include "GS/Renderers/SW/GSSetupPrimCodeGenerator.arm64.h"
 #include "GS/Renderers/SW/GSDrawScanlineCodeGenerator.arm64.h"
 #endif
+#ifdef ARCH_WASM32
+#include "wasm/GSCodeGeneratorStubs.h"
+#endif
 
 struct GSScanlineLocalData;
 

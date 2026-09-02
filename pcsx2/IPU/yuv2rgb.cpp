@@ -42,7 +42,7 @@ void yuv2rgb_reference(void)
 		}
 }
 
-#if defined(ARCH_X86)
+#if defined(ARCH_X86) || defined(ARCH_WASM32)
 
 // Suikoden Tactics FMV speed results: Reference - ~72fps, SSE2 - ~120fps
 // An AVX2 version is only slightly faster than an SSE2 version (+2-3fps)

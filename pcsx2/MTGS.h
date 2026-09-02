@@ -79,6 +79,13 @@ namespace MTGS
 		u32* width, u32* height, std::vector<u32>* pixels);
 	void SetRunIdle(bool enabled);
 
+#ifdef ARCH_WASM32
+	/// Runs the GS pump on the calling (browser main) thread's event loop instead of a pthread.
+	/// Must be called before StartThread().
+	void SetWebPumpOnMainThread(bool enabled);
+	bool IsWebPumpOnMainThread();
+#endif
+
 	// Size of the ringbuffer as a power of 2 -- size is a multiple of simd128s.
 	// (actual size is 1<<m_RingBufferSizeFactor simd vectors [128-bit values])
 	// A value of 19 is a 8meg ring buffer.  18 would be 4 megs, and 20 would be 16 megs.

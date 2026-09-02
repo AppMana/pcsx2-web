@@ -49,6 +49,31 @@ endif()
 option(USE_ASAN "Enable address sanitizer")
 
 #-------------------------------------------------------------------------------
+# Browser (Emscripten) build
+#-------------------------------------------------------------------------------
+option(PCSX2_WEB "Build the PCSX2 core as a wasm32 + pthreads module with the browser host." OFF)
+if(PCSX2_WEB)
+	if(NOT EMSCRIPTEN)
+		message(FATAL_ERROR "PCSX2_WEB requires the Emscripten toolchain (configure with emcmake).")
+	endif()
+	set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+	set(ENABLE_QT_UI OFF CACHE BOOL "" FORCE)
+	set(ENABLE_GSRUNNER OFF CACHE BOOL "" FORCE)
+	set(USE_VULKAN OFF CACHE BOOL "" FORCE)
+	set(USE_OPENGL OFF CACHE BOOL "" FORCE)
+	set(X11_API OFF CACHE BOOL "" FORCE)
+	set(WAYLAND_API OFF CACHE BOOL "" FORCE)
+	set(USE_BACKTRACE OFF CACHE BOOL "" FORCE)
+	set(ENABLE_SETCAP OFF CACHE BOOL "" FORCE)
+	set(LTO_PCSX2_CORE OFF CACHE BOOL "" FORCE)
+	set(DISABLE_ADVANCE_SIMD OFF CACHE BOOL "" FORCE)
+	set(USE_VTUNE OFF CACHE BOOL "" FORCE)
+	set(USE_LINKED_FFMPEG OFF CACHE BOOL "" FORCE)
+	set(POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
+	list(APPEND PCSX2_DEFS PCSX2_WEB=1)
+endif()
+
+#-------------------------------------------------------------------------------
 # if no build type is set, use Devel as default
 # Note without the CMAKE_BUILD_TYPE options the value is still defined to ""
 # Ensure that the value set by the User is correct to avoid some bad behavior later
@@ -79,7 +104,13 @@ mark_as_advanced(CMAKE_C_FLAGS_DEVEL CMAKE_CXX_FLAGS_DEVEL CMAKE_LINKER_FLAGS_DE
 #-------------------------------------------------------------------------------
 # Select the architecture
 #-------------------------------------------------------------------------------
-if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
+if(EMSCRIPTEN)
+	message(STATUS "Building for wasm32 (Emscripten).")
+	list(APPEND PCSX2_DEFS _M_WASM32=1)
+	set(ARCH_WASM32 TRUE)
+	add_compile_options("-msimd128" "-msse4.1" "-pthread")
+	add_link_options("-pthread")
+elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
    "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
 	# Multi-ISA only exists on x86.
 	option(DISABLE_ADVANCE_SIMD "Disable advance use of SIMD (SSE2+ & AVX)" OFF)

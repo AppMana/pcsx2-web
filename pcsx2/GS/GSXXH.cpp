@@ -6,6 +6,9 @@
 // These get pulled in by xxhash.h in non-PCH mode, so we need to include them in global namespace scope.
 #include <cmath>
 #include <cstdlib>
+#ifdef ARCH_WASM32
+#include <arm_neon.h>
+#endif
 
 #define XXH_STATIC_LINKING_ONLY 1
 #define XXH_INLINE_ALL 1

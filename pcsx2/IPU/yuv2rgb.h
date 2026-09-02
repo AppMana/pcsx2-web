@@ -7,7 +7,7 @@
 
 MULTI_ISA_DEF(extern void yuv2rgb_reference();)
 
-#if defined(ARCH_X86)
+#if defined(ARCH_X86) || defined(ARCH_WASM32)
 
 #define yuv2rgb yuv2rgb_sse2
 MULTI_ISA_DEF(extern void yuv2rgb_sse2();)

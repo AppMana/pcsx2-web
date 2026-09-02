@@ -85,6 +85,30 @@ namespace HostMemoryMap
 	}
 } // namespace HostMemoryMap
 
+#ifdef ARCH_WASM32
+
+bool SysMemory::AllocateMemoryMap()
+{
+	s_data_memory = static_cast<u8*>(_aligned_malloc(HostMemoryMap::MainSize, __pagesize));
+	if (!s_data_memory)
+	{
+		Host::ReportErrorAsync("Error", "Failed to allocate data memory.");
+		ReleaseMemoryMap();
+		return false;
+	}
+
+	std::memset(s_data_memory, 0, HostMemoryMap::MainSize);
+
+	HostMemoryMap::EEmem = (uptr)(s_data_memory + HostMemoryMap::EEmemOffset);
+	HostMemoryMap::IOPmem = (uptr)(s_data_memory + HostMemoryMap::IOPmemOffset);
+	HostMemoryMap::VUmem = (uptr)(s_data_memory + HostMemoryMap::VUmemOffset);
+
+	DumpMemoryMap();
+	return true;
+}
+
+#else
+
 bool SysMemory::AllocateMemoryMap()
 {
 	s_data_memory_file_handle = HostSys::CreateSharedMemory(HostSys::GetFileMappingName("pcsx2").c_str(), HostMemoryMap::MainSize);
@@ -124,6 +148,8 @@ bool SysMemory::AllocateMemoryMap()
 	return true;
 }
 
+#endif
+
 void SysMemory::DumpMemoryMap()
 {
 #define DUMP_REGION(name, base, offset, size) \
@@ -149,6 +175,19 @@ void SysMemory::DumpMemoryMap()
 #undef DUMP_REGION
 }
 
+#ifdef ARCH_WASM32
+
+void SysMemory::ReleaseMemoryMap()
+{
+	if (s_data_memory)
+	{
+		_aligned_free(s_data_memory);
+		s_data_memory = nullptr;
+	}
+}
+
+#else
+
 void SysMemory::ReleaseMemoryMap()
 {
 	if (s_code_memory)
@@ -171,6 +210,8 @@ void SysMemory::ReleaseMemoryMap()
 		s_data_memory_file_handle = nullptr;
 	}
 }
+
+#endif
 
 bool SysMemory::Allocate()
 {

@@ -6,6 +6,9 @@
 #include "MultiISA.h"
 
 #ifndef XXH_versionNumber
+#ifdef ARCH_WASM32
+	#include <arm_neon.h>
+#endif
 	#define XXH_STATIC_LINKING_ONLY 1
 	#define XXH_INLINE_ALL 1
 	#include <xxhash.h>

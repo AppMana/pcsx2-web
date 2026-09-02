@@ -1225,6 +1225,11 @@ Pcsx2Config::SPU2Options::SPU2Options()
 	bitset = 0;
 }
 
+static std::optional<AudioBackend> ParseAudioBackendName(const char* str)
+{
+	return AudioStream::ParseBackendName(str);
+}
+
 void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 {
 	{
@@ -1269,7 +1274,7 @@ void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 		SettingsWrapEntry(StandardVolume);
 		SettingsWrapEntry(FastForwardVolume);
 		SettingsWrapEntry(OutputMuted);
-		SettingsWrapParsedEnum(Backend, "Backend", &AudioStream::ParseBackendName, &AudioStream::GetBackendName);
+		SettingsWrapParsedEnum(Backend, "Backend", &ParseAudioBackendName, &AudioStream::GetBackendName);
 		SettingsWrapParsedEnum(SyncMode, "SyncMode", &ParseSyncMode, &GetSyncModeName);
 		SettingsWrapEntry(DriverName);
 		SettingsWrapEntry(DeviceName);

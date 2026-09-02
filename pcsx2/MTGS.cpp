@@ -18,6 +18,11 @@
 #include <mutex>
 #include <thread>
 
+#ifdef ARCH_WASM32
+#include <emscripten/eventloop.h>
+#include <pthread.h>
+#endif
+
 // Uncomment this to enable profiling of the GS RingBufferCopy function.
 //#define PCSX2_GSRING_SAMPLING_STATS
 
@@ -46,6 +51,20 @@ namespace MTGS
 
 	static void ThreadEntryPoint();
 	static void MainLoop();
+
+	enum class IterationResult
+	{
+		Closed,
+		Drained,
+		Yield,
+	};
+
+	static IterationResult MainLoopIteration(std::unique_lock<std::mutex>& mtvu_lock, u64 deadline_ticks);
+
+#ifdef ARCH_WASM32
+	static void WebPumpRun(void* userdata);
+	static void WebPumpOnWork(void* userdata);
+#endif
 
 	static void GenericStall(uint size);
 
@@ -99,6 +118,19 @@ namespace MTGS
 	static std::atomic_bool s_shutdown_flag{false};
 	static std::atomic_bool s_run_idle_flag{false};
 	static Threading::UserspaceSemaphore s_open_or_close_done;
+
+#ifdef ARCH_WASM32
+	// The browser GS worker never blocks its thread: MainLoop() is driven from the event loop
+	// so that WebGPU callbacks and canvas presentation can run between ring buffer drains.
+	static constexpr u64 WEB_PUMP_BUDGET_THREAD_NS = 16000000;
+	static constexpr u64 WEB_PUMP_BUDGET_MAIN_NS = 4000000;
+	static bool s_web_pump_main_thread = false;
+	static bool s_web_pump_started = false;
+	static bool s_web_pump_open = false;
+	static bool s_web_pump_resume = false;
+	static u64 s_web_pump_budget_ticks = WEB_PUMP_BUDGET_THREAD_NS;
+	static std::unique_lock<std::mutex> s_web_pump_mtvu_lock;
+#endif
 } // namespace MTGS
 
 // =====================================================================================================
@@ -117,6 +149,24 @@ bool MTGS::IsOpen()
 
 void MTGS::StartThread()
 {
+#ifdef ARCH_WASM32
+	if (s_web_pump_main_thread)
+	{
+		if (s_web_pump_started)
+			return;
+
+		pxAssertRel(!s_open_flag.load(), "GS thread should not be opened when starting");
+		s_sem_event.Reset();
+		s_shutdown_flag.store(false, std::memory_order_release);
+		s_web_pump_started = true;
+		s_web_pump_budget_ticks = (WEB_PUMP_BUDGET_MAIN_NS * GetTickFrequency()) / 1000000000ULL;
+		ThreadEntryPoint();
+		return;
+	}
+
+	s_web_pump_budget_ticks = (WEB_PUMP_BUDGET_THREAD_NS * GetTickFrequency()) / 1000000000ULL;
+#endif
+
 	if (s_thread.Joinable())
 		return;
 
@@ -128,6 +178,21 @@ void MTGS::StartThread()
 
 void MTGS::ShutdownThread()
 {
+#ifdef ARCH_WASM32
+	if (s_web_pump_main_thread)
+	{
+		if (!s_web_pump_started)
+			return;
+
+		s_shutdown_flag.store(true, std::memory_order_release);
+		if (IsOpen())
+			WaitForClose();
+
+		s_sem_event.NotifyOfWork();
+		return;
+	}
+#endif
+
 	if (!s_thread.Joinable())
 		return;
 
@@ -153,6 +218,15 @@ void MTGS::ThreadEntryPoint()
 	// Explicitly set rounding mode to default (nearest, FTZ off).
 	// Otherwise it appears to get inherited from the EE thread on Linux.
 	FPControlRegister::SetCurrent(FPControlRegister::GetDefault());
+
+#ifdef ARCH_WASM32
+	s_web_pump_open = false;
+	s_web_pump_resume = false;
+	WebPumpRun(nullptr);
+	if (!s_web_pump_main_thread)
+		emscripten_unwind_to_js_event_loop();
+	return;
+#endif
 
 	for (;;)
 	{
@@ -316,10 +390,6 @@ void MTGS::MainLoop()
 	// Threading info: run in MTGS thread
 	// m_ReadPos is only update by the MTGS thread so it is safe to load it with a relaxed atomic
 
-#ifdef RINGBUF_DEBUG_STACK
-	PacketTagType prevCmd;
-#endif
-
 	std::unique_lock mtvu_lock(s_mtx_RingBufferBusy2);
 
 	while (true)
@@ -339,272 +409,412 @@ void MTGS::MainLoop()
 			mtvu_lock.lock();
 		}
 
-		if (!s_open_flag.load(std::memory_order_acquire))
+		if (MainLoopIteration(mtvu_lock, 0) == IterationResult::Closed)
 			break;
-
-		// note: m_ReadPos is intentionally not volatile, because it should only
-		// ever be modified by this thread.
-		while (s_ReadPos.load(std::memory_order_relaxed) != s_WritePos.load(std::memory_order_acquire))
-		{
-			const unsigned int local_ReadPos = s_ReadPos.load(std::memory_order_relaxed);
-
-			pxAssert(local_ReadPos < RingBufferSize);
-
-			const PacketTagType& tag = (PacketTagType&)RingBuffer[local_ReadPos];
-			u32 ringposinc = 1;
-
-#ifdef RINGBUF_DEBUG_STACK
-			// pop a ringpos off the stack.  It should match this one!
-
-			s_lock_Stack.Lock();
-			uptr stackpos = ringposStack.back();
-			if (stackpos != local_ReadPos)
-			{
-				Console.Error("MTGS Ringbuffer Critical Failure ---> %x to %x (prevCmd: %x)\n", stackpos, local_ReadPos, prevCmd.command);
-			}
-			pxAssert(stackpos == local_ReadPos);
-			prevCmd = tag;
-			ringposStack.pop_back();
-			s_lock_Stack.Release();
-#endif
-
-			switch (static_cast<Command>(tag.command))
-			{
-#if COPY_GS_PACKET_TO_MTGS == 1
-				case Command::GIFPath1:
-				{
-					uint datapos = (local_ReadPos + 1) & RingBufferMask;
-					const int qsize = tag.data[0];
-					const u128* data = &RingBuffer[datapos];
-
-					MTGS_LOG("(MTGS Packet Read) ringtype=P1, qwc=%u", qsize);
-
-					uint endpos = datapos + qsize;
-					if (endpos >= RingBufferSize)
-					{
-						uint firstcopylen = RingBufferSize - datapos;
-						GSgifTransfer((u8*)data, firstcopylen);
-						datapos = endpos & RingBufferMask;
-						GSgifTransfer((u8*)RingBuffer.m_Ring, datapos);
-					}
-					else
-					{
-						GSgifTransfer((u8*)data, qsize);
-					}
-
-					ringposinc += qsize;
-				}
-				break;
-
-				case Command::GIFPath2:
-				{
-					uint datapos = (local_ReadPos + 1) & RingBufferMask;
-					const int qsize = tag.data[0];
-					const u128* data = &RingBuffer[datapos];
-
-					MTGS_LOG("(MTGS Packet Read) ringtype=P2, qwc=%u", qsize);
-
-					uint endpos = datapos + qsize;
-					if (endpos >= RingBufferSize)
-					{
-						uint firstcopylen = RingBufferSize - datapos;
-						GSgifTransfer2((u32*)data, firstcopylen);
-						datapos = endpos & RingBufferMask;
-						GSgifTransfer2((u32*)RingBuffer.m_Ring, datapos);
-					}
-					else
-					{
-						GSgifTransfer2((u32*)data, qsize);
-					}
-
-					ringposinc += qsize;
-				}
-				break;
-
-				case Command::GIFPath3:
-				{
-					uint datapos = (local_ReadPos + 1) & RingBufferMask;
-					const int qsize = tag.data[0];
-					const u128* data = &RingBuffer[datapos];
-
-					MTGS_LOG("(MTGS Packet Read) ringtype=P3, qwc=%u", qsize);
-
-					uint endpos = datapos + qsize;
-					if (endpos >= RingBufferSize)
-					{
-						uint firstcopylen = RingBufferSize - datapos;
-						GSgifTransfer3((u32*)data, firstcopylen);
-						datapos = endpos & RingBufferMask;
-						GSgifTransfer3((u32*)RingBuffer.m_Ring, datapos);
-					}
-					else
-					{
-						GSgifTransfer3((u32*)data, qsize);
-					}
-
-					ringposinc += qsize;
-				}
-				break;
-#endif
-				case Command::GSPacket:
-				{
-					Gif_Path& path = gifUnit.gifPath[tag.data[2]];
-					u32 offset = tag.data[0];
-					u32 size = tag.data[1];
-					if (offset != ~0u)
-						GSgifTransfer((u8*)&path.buffer[offset], size / 16);
-					path.readAmount.fetch_sub(size, std::memory_order_acq_rel);
-					break;
-				}
-
-				case Command::MTVUGSPacket:
-				{
-					MTVU_LOG("MTGS - Waiting on semaXGkick!");
-					if (!vu1Thread.semaXGkick.TryWait())
-					{
-						mtvu_lock.unlock();
-						// Wait for MTVU to complete vu1 program
-						vu1Thread.semaXGkick.Wait();
-						mtvu_lock.lock();
-					}
-					Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
-					GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
-					if (gsPack.size)
-						GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
-					path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);
-					path.PopGSPacketMTVU(); // Should be done last, for proper Gif_MTGS_Wait()
-					break;
-				}
-
-				default:
-				{
-					switch (static_cast<Command>(tag.command))
-					{
-						case Command::VSync:
-						{
-							const int qsize = tag.data[0];
-							ringposinc += qsize;
-
-							MTGS_LOG("(MTGS Packet Read) ringtype=Vsync, field=%u, skip=%s", !!(((u32&)RingBuffer.Regs[0x1000]) & 0x2000) ? 0 : 1, tag.data[1] ? "true" : "false");
-
-							// Mail in the important GS registers.
-							// This seemingly obtuse system is needed in order to handle cases where the vsync data wraps
-							// around the edge of the ringbuffer.  If not for that I'd just use a struct. >_<
-
-							uint datapos = (local_ReadPos + 1) & RingBufferMask;
-							MemCopy_WrappedSrc(RingBuffer.m_Ring, datapos, RingBufferSize, (u128*)RingBuffer.Regs, 0xf);
-
-							u32* remainder = (u32*)&RingBuffer[datapos];
-							((u32&)RingBuffer.Regs[0x1000]) = remainder[0];
-							((u32&)RingBuffer.Regs[0x1010]) = remainder[1];
-							((GSRegSIGBLID&)RingBuffer.Regs[0x1080]) = (GSRegSIGBLID&)remainder[2];
-
-							// CSR & 0x2000; is the pageflip id.
-							GSvsync((((u32&)RingBuffer.Regs[0x1000]) & 0x2000) ? 0 : 1, remainder[4] != 0);
-
-							s_QueuedFrameCount.fetch_sub(1);
-							if (s_VsyncSignalListener.exchange(false))
-								s_sem_Vsync.Post();
-
-							// Do not StateCheckInThread() here
-							// Otherwise we could pause while there's still data in the queue
-							// Which could make the MTVU thread wait forever for it to empty
-						}
-						break;
-
-						case Command::AsyncCall:
-							{
-								AsyncCallType* const func = (AsyncCallType*)tag.pointer;
-								(*func)();
-								delete func;
-							}
-							break;
-
-						case Command::Freeze:
-						{
-							MTGS::FreezeData* data = (MTGS::FreezeData*)tag.pointer;
-							int mode = tag.data[0];
-							data->retval = GSfreeze((FreezeAction)mode, (freezeData*)data->fdata);
-						}
-						break;
-
-						case Command::Reset:
-							MTGS_LOG("(MTGS Packet Read) ringtype=Reset");
-							GSreset(tag.data[0] != 0);
-							break;
-
-						case Command::SoftReset:
-						{
-							int mask = tag.data[0];
-							MTGS_LOG("(MTGS Packet Read) ringtype=SoftReset");
-							GSgifSoftReset(mask);
-						}
-						break;
-
-						case Command::InitAndReadFIFO:
-							MTGS_LOG("(MTGS Packet Read) ringtype=Fifo2, size=%d", tag.data[0]);
-							GSInitAndReadFIFO((u8*)tag.pointer, tag.data[0]);
-							break;
-
-#ifdef PCSX2_DEVBUILD
-						default:
-							Console.Error("GSThreadProc, bad packet (%x) at m_ReadPos: %x, m_WritePos: %x", tag.command, local_ReadPos, s_WritePos.load());
-							pxFail("Bad packet encountered in the MTGS Ringbuffer.");
-							s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_release);
-							continue;
-#else
-							// Optimized performance in non-Dev builds.
-							jNO_DEFAULT;
-#endif
-					}
-				}
-			}
-
-			uint newringpos = (s_ReadPos.load(std::memory_order_relaxed) + ringposinc) & RingBufferMask;
-
-			if (IsDevBuild && EmuConfig.GS.SynchronousMTGS) [[unlikely]]
-			{
-				pxAssert(s_WritePos == newringpos);
-			}
-
-			s_ReadPos.store(newringpos, std::memory_order_release);
-
-			if (s_SignalRingEnable.load(std::memory_order_acquire))
-			{
-				// The EEcore has requested a signal after some amount of processed data.
-				if (s_SignalRingPosition.fetch_sub(ringposinc) <= 0)
-				{
-					// Make sure to post the signal after the m_ReadPos has been updated...
-					s_SignalRingEnable.store(false, std::memory_order_release);
-					s_sem_OnRingReset.Post();
-					continue;
-				}
-			}
-		}
-
-		// TODO: With the new race-free WorkSema do we still need these?
-
-		// Safety valve in case standard signals fail for some reason -- this ensures the EEcore
-		// won't sleep the eternity, even if SignalRingPosition didn't reach 0 for some reason.
-		// Important: Need to unlock the MTGS busy signal PRIOR, so that EEcore SetEvent() calls
-		// parallel to this handler aren't accidentally blocked.
-		if (s_SignalRingEnable.exchange(false))
-		{
-			//Console.Warning( "(MTGS Thread) Dangling RingSignal on empty buffer!  signalpos=0x%06x", m_SignalRingPosition.exchange(0) ) );
-			s_SignalRingPosition.store(0, std::memory_order_release);
-			s_sem_OnRingReset.Post();
-		}
-
-		if (s_VsyncSignalListener.exchange(false))
-			s_sem_Vsync.Post();
-
-		//Console.Warning( "(MTGS Thread) Nothing to do!  ringpos=0x%06x", m_ReadPos );
 	}
 
 	// Unblock any threads in WaitGS in case MTGS gets cancelled while still processing work
 	s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_relaxed);
 	s_sem_event.Kill();
 }
+
+// One wake-up of the GS thread: drains the ring buffer and services the dangling signals.
+// Returns Closed when the open flag has been cleared, Yield when the per-call budget expired
+// with commands still queued, otherwise Drained.
+MTGS::IterationResult MTGS::MainLoopIteration(std::unique_lock<std::mutex>& mtvu_lock, u64 deadline_ticks)
+{
+#ifdef RINGBUF_DEBUG_STACK
+	PacketTagType prevCmd;
+#endif
+
+	if (!s_open_flag.load(std::memory_order_acquire))
+		return IterationResult::Closed;
+
+
+	// note: m_ReadPos is intentionally not volatile, because it should only
+	// ever be modified by this thread.
+	while (s_ReadPos.load(std::memory_order_relaxed) != s_WritePos.load(std::memory_order_acquire))
+	{
+#ifdef ARCH_WASM32
+		if (deadline_ticks != 0 && GetCPUTicks() >= deadline_ticks)
+			return IterationResult::Yield;
+#endif
+
+		const unsigned int local_ReadPos = s_ReadPos.load(std::memory_order_relaxed);
+
+		pxAssert(local_ReadPos < RingBufferSize);
+
+		const PacketTagType& tag = (PacketTagType&)RingBuffer[local_ReadPos];
+		u32 ringposinc = 1;
+
+#ifdef RINGBUF_DEBUG_STACK
+		// pop a ringpos off the stack.  It should match this one!
+
+		s_lock_Stack.Lock();
+		uptr stackpos = ringposStack.back();
+		if (stackpos != local_ReadPos)
+		{
+			Console.Error("MTGS Ringbuffer Critical Failure ---> %x to %x (prevCmd: %x)\n", stackpos, local_ReadPos, prevCmd.command);
+		}
+		pxAssert(stackpos == local_ReadPos);
+		prevCmd = tag;
+		ringposStack.pop_back();
+		s_lock_Stack.Release();
+#endif
+
+		switch (static_cast<Command>(tag.command))
+		{
+#if COPY_GS_PACKET_TO_MTGS == 1
+			case Command::GIFPath1:
+			{
+				uint datapos = (local_ReadPos + 1) & RingBufferMask;
+				const int qsize = tag.data[0];
+				const u128* data = &RingBuffer[datapos];
+
+				MTGS_LOG("(MTGS Packet Read) ringtype=P1, qwc=%u", qsize);
+
+				uint endpos = datapos + qsize;
+				if (endpos >= RingBufferSize)
+				{
+					uint firstcopylen = RingBufferSize - datapos;
+					GSgifTransfer((u8*)data, firstcopylen);
+					datapos = endpos & RingBufferMask;
+					GSgifTransfer((u8*)RingBuffer.m_Ring, datapos);
+				}
+				else
+				{
+					GSgifTransfer((u8*)data, qsize);
+				}
+
+				ringposinc += qsize;
+			}
+			break;
+
+			case Command::GIFPath2:
+			{
+				uint datapos = (local_ReadPos + 1) & RingBufferMask;
+				const int qsize = tag.data[0];
+				const u128* data = &RingBuffer[datapos];
+
+				MTGS_LOG("(MTGS Packet Read) ringtype=P2, qwc=%u", qsize);
+
+				uint endpos = datapos + qsize;
+				if (endpos >= RingBufferSize)
+				{
+					uint firstcopylen = RingBufferSize - datapos;
+					GSgifTransfer2((u32*)data, firstcopylen);
+					datapos = endpos & RingBufferMask;
+					GSgifTransfer2((u32*)RingBuffer.m_Ring, datapos);
+				}
+				else
+				{
+					GSgifTransfer2((u32*)data, qsize);
+				}
+
+				ringposinc += qsize;
+			}
+			break;
+
+			case Command::GIFPath3:
+			{
+				uint datapos = (local_ReadPos + 1) & RingBufferMask;
+				const int qsize = tag.data[0];
+				const u128* data = &RingBuffer[datapos];
+
+				MTGS_LOG("(MTGS Packet Read) ringtype=P3, qwc=%u", qsize);
+
+				uint endpos = datapos + qsize;
+				if (endpos >= RingBufferSize)
+				{
+					uint firstcopylen = RingBufferSize - datapos;
+					GSgifTransfer3((u32*)data, firstcopylen);
+					datapos = endpos & RingBufferMask;
+					GSgifTransfer3((u32*)RingBuffer.m_Ring, datapos);
+				}
+				else
+				{
+					GSgifTransfer3((u32*)data, qsize);
+				}
+
+				ringposinc += qsize;
+			}
+			break;
+#endif
+			case Command::GSPacket:
+			{
+				Gif_Path& path = gifUnit.gifPath[tag.data[2]];
+				u32 offset = tag.data[0];
+				u32 size = tag.data[1];
+				if (offset != ~0u)
+					GSgifTransfer((u8*)&path.buffer[offset], size / 16);
+				path.readAmount.fetch_sub(size, std::memory_order_acq_rel);
+				break;
+			}
+
+			case Command::MTVUGSPacket:
+			{
+				MTVU_LOG("MTGS - Waiting on semaXGkick!");
+				if (!vu1Thread.semaXGkick.TryWait())
+				{
+					mtvu_lock.unlock();
+					// Wait for MTVU to complete vu1 program
+					vu1Thread.semaXGkick.Wait();
+					mtvu_lock.lock();
+				}
+				Gif_Path& path = gifUnit.gifPath[GIF_PATH_1];
+				GS_Packet gsPack = path.GetGSPacketMTVU(); // Get vu1 program's xgkick packet(s)
+				if (gsPack.size)
+					GSgifTransfer((u8*)&path.buffer[gsPack.offset], gsPack.size / 16);
+				path.readAmount.fetch_sub(gsPack.size + gsPack.readAmount, std::memory_order_acq_rel);
+				path.PopGSPacketMTVU(); // Should be done last, for proper Gif_MTGS_Wait()
+				break;
+			}
+
+			default:
+			{
+				switch (static_cast<Command>(tag.command))
+				{
+					case Command::VSync:
+					{
+						const int qsize = tag.data[0];
+						ringposinc += qsize;
+
+						MTGS_LOG("(MTGS Packet Read) ringtype=Vsync, field=%u, skip=%s", !!(((u32&)RingBuffer.Regs[0x1000]) & 0x2000) ? 0 : 1, tag.data[1] ? "true" : "false");
+
+						// Mail in the important GS registers.
+						// This seemingly obtuse system is needed in order to handle cases where the vsync data wraps
+						// around the edge of the ringbuffer.  If not for that I'd just use a struct. >_<
+
+						uint datapos = (local_ReadPos + 1) & RingBufferMask;
+						MemCopy_WrappedSrc(RingBuffer.m_Ring, datapos, RingBufferSize, (u128*)RingBuffer.Regs, 0xf);
+
+						u32* remainder = (u32*)&RingBuffer[datapos];
+						((u32&)RingBuffer.Regs[0x1000]) = remainder[0];
+						((u32&)RingBuffer.Regs[0x1010]) = remainder[1];
+						((GSRegSIGBLID&)RingBuffer.Regs[0x1080]) = (GSRegSIGBLID&)remainder[2];
+
+						// CSR & 0x2000; is the pageflip id.
+						GSvsync((((u32&)RingBuffer.Regs[0x1000]) & 0x2000) ? 0 : 1, remainder[4] != 0);
+
+						s_QueuedFrameCount.fetch_sub(1);
+						if (s_VsyncSignalListener.exchange(false))
+							s_sem_Vsync.Post();
+
+						// Do not StateCheckInThread() here
+						// Otherwise we could pause while there's still data in the queue
+						// Which could make the MTVU thread wait forever for it to empty
+					}
+					break;
+
+					case Command::AsyncCall:
+						{
+							AsyncCallType* const func = (AsyncCallType*)tag.pointer;
+							(*func)();
+							delete func;
+						}
+						break;
+
+					case Command::Freeze:
+					{
+						MTGS::FreezeData* data = (MTGS::FreezeData*)tag.pointer;
+						int mode = tag.data[0];
+						data->retval = GSfreeze((FreezeAction)mode, (freezeData*)data->fdata);
+					}
+					break;
+
+					case Command::Reset:
+						MTGS_LOG("(MTGS Packet Read) ringtype=Reset");
+						GSreset(tag.data[0] != 0);
+						break;
+
+					case Command::SoftReset:
+					{
+						int mask = tag.data[0];
+						MTGS_LOG("(MTGS Packet Read) ringtype=SoftReset");
+						GSgifSoftReset(mask);
+					}
+					break;
+
+					case Command::InitAndReadFIFO:
+						MTGS_LOG("(MTGS Packet Read) ringtype=Fifo2, size=%d", tag.data[0]);
+						GSInitAndReadFIFO((u8*)tag.pointer, tag.data[0]);
+						break;
+
+#ifdef PCSX2_DEVBUILD
+					default:
+						Console.Error("GSThreadProc, bad packet (%x) at m_ReadPos: %x, m_WritePos: %x", tag.command, local_ReadPos, s_WritePos.load());
+						pxFail("Bad packet encountered in the MTGS Ringbuffer.");
+						s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_release);
+						continue;
+#else
+						// Optimized performance in non-Dev builds.
+						jNO_DEFAULT;
+#endif
+				}
+			}
+		}
+
+		uint newringpos = (s_ReadPos.load(std::memory_order_relaxed) + ringposinc) & RingBufferMask;
+
+		if (IsDevBuild && EmuConfig.GS.SynchronousMTGS) [[unlikely]]
+		{
+			pxAssert(s_WritePos == newringpos);
+		}
+
+		s_ReadPos.store(newringpos, std::memory_order_release);
+
+		if (s_SignalRingEnable.load(std::memory_order_acquire))
+		{
+			// The EEcore has requested a signal after some amount of processed data.
+			if (s_SignalRingPosition.fetch_sub(ringposinc) <= 0)
+			{
+				// Make sure to post the signal after the m_ReadPos has been updated...
+				s_SignalRingEnable.store(false, std::memory_order_release);
+				s_sem_OnRingReset.Post();
+				continue;
+			}
+		}
+	}
+
+	// TODO: With the new race-free WorkSema do we still need these?
+
+	// Safety valve in case standard signals fail for some reason -- this ensures the EEcore
+	// won't sleep the eternity, even if SignalRingPosition didn't reach 0 for some reason.
+	// Important: Need to unlock the MTGS busy signal PRIOR, so that EEcore SetEvent() calls
+	// parallel to this handler aren't accidentally blocked.
+	if (s_SignalRingEnable.exchange(false))
+	{
+		//Console.Warning( "(MTGS Thread) Dangling RingSignal on empty buffer!  signalpos=0x%06x", m_SignalRingPosition.exchange(0) ) );
+		s_SignalRingPosition.store(0, std::memory_order_release);
+		s_sem_OnRingReset.Post();
+	}
+
+	if (s_VsyncSignalListener.exchange(false))
+		s_sem_Vsync.Post();
+
+	//Console.Warning( "(MTGS Thread) Nothing to do!  ringpos=0x%06x", m_ReadPos );
+
+	return IterationResult::Drained;
+}
+
+#ifdef ARCH_WASM32
+
+void MTGS::SetWebPumpOnMainThread(bool enabled)
+{
+	pxAssertRel(!s_web_pump_started && !s_thread.Joinable(), "GS pump host can only change while stopped");
+	s_web_pump_main_thread = enabled;
+}
+
+bool MTGS::IsWebPumpOnMainThread()
+{
+	return s_web_pump_main_thread;
+}
+
+void MTGS::WebPumpOnWork(void* userdata)
+{
+	s_web_pump_mtvu_lock.lock();
+	s_web_pump_resume = true;
+	WebPumpRun(userdata);
+}
+
+void MTGS::WebPumpRun(void* userdata)
+{
+	for (;;)
+	{
+		if (!s_web_pump_open)
+		{
+			// wait until we're actually asked to initialize (and config has been loaded, etc)
+			if (!s_open_flag.load(std::memory_order_acquire))
+			{
+				if (s_shutdown_flag.load(std::memory_order_acquire))
+				{
+					s_sem_event.Kill();
+					s_web_pump_started = false;
+					if (!s_web_pump_main_thread)
+						pthread_exit(nullptr);
+					return;
+				}
+
+				if (!s_sem_event.WaitForWorkAsync(&MTGS::WebPumpRun, nullptr))
+					return;
+
+				continue;
+			}
+
+			// try initializing.. this could fail
+			std::memcpy(RingBuffer.Regs, PS2MEM_GS, sizeof(PS2MEM_GS));
+			const bool opened = GSopen(EmuConfig.GS, EmuConfig.GS.Renderer, RingBuffer.Regs,
+				VMManager::GetEffectiveVSyncMode(), VMManager::ShouldAllowPresentThrottle());
+			s_open_flag.store(opened, std::memory_order_release);
+
+			// notify emu thread that we finished opening (or failed)
+			s_open_or_close_done.Post();
+
+			// are we open?
+			if (!opened)
+			{
+				// wait until we're asked to try again...
+				continue;
+			}
+
+			s_web_pump_mtvu_lock = std::unique_lock<std::mutex>(s_mtx_RingBufferBusy2);
+			s_web_pump_open = true;
+			s_web_pump_resume = false;
+		}
+
+		bool idle_present = false;
+		if (!s_web_pump_resume)
+		{
+			if (s_run_idle_flag.load(std::memory_order_acquire) && VMManager::GetState() != VMState::Running && GSHasDisplayWindow())
+			{
+				idle_present = true;
+				if (!s_sem_event.CheckForWork())
+				{
+					GSPresentCurrentFrame();
+					GSThrottlePresentation();
+				}
+			}
+			else
+			{
+				s_web_pump_mtvu_lock.unlock();
+				if (!s_sem_event.WaitForWorkAsync(&MTGS::WebPumpOnWork, nullptr))
+					return;
+				s_web_pump_mtvu_lock.lock();
+			}
+		}
+		s_web_pump_resume = false;
+
+		const IterationResult result = MainLoopIteration(s_web_pump_mtvu_lock, GetCPUTicks() + s_web_pump_budget_ticks);
+		if (result == IterationResult::Closed)
+		{
+			// Unblock any threads in WaitGS in case MTGS gets cancelled while still processing work
+			s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_relaxed);
+			s_sem_event.Kill();
+			s_web_pump_mtvu_lock.unlock();
+			s_web_pump_mtvu_lock.release();
+			s_web_pump_open = false;
+
+			// when we come back here, it's because we closed (or shutdown)
+			// that means the emu thread should be blocked, waiting for us to be done
+			pxAssertRel(!s_open_flag.load(std::memory_order_relaxed), "Open flag is clear on close");
+			GSclose();
+			s_open_or_close_done.Post();
+
+			// we need to reset sem_event here, because MainLoopIteration() kills it.
+			s_sem_event.Reset();
+			continue;
+		}
+
+		if (result == IterationResult::Yield || idle_present)
+		{
+			s_web_pump_resume = (result == IterationResult::Yield);
+			emscripten_set_timeout(&MTGS::WebPumpRun, 0, nullptr);
+			return;
+		}
+	}
+}
+
+#endif
 
 // Waits for the GS to empty out the entire ring buffer contents.
 // If syncRegs, then writes pcsx2's gs regs to MTGS's internal copy

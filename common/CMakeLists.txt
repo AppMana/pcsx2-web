@@ -14,7 +14,6 @@ target_sources(common PRIVATE
 	CrashHandler.cpp
 	DynamicLibrary.cpp
 	Error.cpp
-	FastJmp.cpp
 	FileSystem.cpp
 	HostSys.cpp
 	Image.cpp
@@ -157,6 +156,13 @@ elseif(APPLE)
 		"-framework Foundation"
 		"-framework IOKit"
 	)
+elseif(EMSCRIPTEN)
+	target_sources(common PRIVATE
+		Wasm/FloatMode.h
+		Wasm/WasmHostSys.cpp
+		Wasm/WasmThreads.cpp
+		Wasm/WasmMisc.cpp
+	)
 else()
 	target_sources(common PRIVATE
 		Linux/LnxHostSys.cpp
@@ -178,6 +184,10 @@ else()
 	endif()
 endif()
 
+if(NOT EMSCRIPTEN)
+	target_sources(common PRIVATE FastJmp.cpp)
+endif()
+
 set_source_files_properties(PrecompiledHeader.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
 
 if(USE_VTUNE)
@@ -189,7 +199,11 @@ if (USE_GCC AND CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 	set_source_files_properties(FastJmp.cpp PROPERTIES COMPILE_FLAGS -fno-lto)
 endif()
 
-if(NOT WIN32)
+if(EMSCRIPTEN)
+	target_sources(common PRIVATE
+		Wasm/WasmHTTPDownloader.cpp
+	)
+elseif(NOT WIN32)
 	# libcurl-based HTTPDownloader
 	target_sources(common PRIVATE
 		HTTPDownloaderCurl.cpp
@@ -207,6 +221,9 @@ target_link_libraries(common PRIVATE
 	WebP::libwebp
 	cpuinfo
 )
+if(EMSCRIPTEN)
+	target_link_libraries(common PUBLIC ZLIB::ZLIB)
+endif()
 
 target_link_libraries(common PUBLIC
 	fmt::fmt

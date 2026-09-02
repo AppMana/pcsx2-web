@@ -832,10 +832,12 @@ public:
 	}
 #endif
 
+#ifndef ARCH_WASM32
 	__forceinline GSVector4i sra64(s32 i) const
 	{
 		return GSVector4i(_mm_sra_epi64(m, _mm_cvtsi32_si128(i)));
 	}
+#endif
 
 #if _M_SSE >= 0x501
 	__forceinline GSVector4i srav64(const GSVector4i& v) const

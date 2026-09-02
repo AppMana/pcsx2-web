@@ -7,7 +7,7 @@
 
 #include "common/Pcsx2Defs.h"
 
-#if defined(ARCH_X86)
+#if defined(ARCH_X86) || defined(ARCH_WASM32)
 
 #ifdef _MSC_VER
 #include <intrin.h>
