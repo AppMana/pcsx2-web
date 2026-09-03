@@ -6,6 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { frameCompareFor, parseTestToml, type CompareSpec, type TestConfig } from "@appmana-public/web-emulator-harness/test-toml";
 import { exactText, jsonlHashDiff } from "@appmana-public/web-emulator-harness/compare";
+import { decodeP2m2 } from "@appmana-public/web-emulator-harness/p2m2";
 
 export type WebGpuFrameCompare = CompareSpec;
 
@@ -13,7 +14,7 @@ export type Pcsx2TestConfig = {
   kit: TestConfig;
   biosRequired: boolean;
   ttyFilter: RegExp | undefined;
-  trace: { tty: boolean; cpu: boolean; ramEvery: number };
+  trace: { tty: boolean; cpu: boolean; ramEvery: number; audio: boolean };
   webgpuFrames: WebGpuFrameCompare | undefined;
 };
 
@@ -27,6 +28,9 @@ export type Fixture = {
   expectedDir: string;
   expectedTtyPath: string | undefined;
   expectedCpuPath: string | undefined;
+  expectedAudioPath: string | undefined;
+  /** The .p2m2 input recording the oracle replays (test.toml `input`). */
+  inputPath: string | undefined;
   manifest: Record<string, unknown> | undefined;
 };
 
@@ -36,7 +40,7 @@ export function parseFixtureToml(text: string): Pcsx2TestConfig {
     kit,
     biosRequired: kit.bios.required,
     ttyFilter: kit.compare.tty?.lineFilter,
-    trace: { tty: kit.trace.tty, cpu: kit.trace.cpu, ramEvery: kit.trace.ram_every },
+    trace: { tty: kit.trace.tty, cpu: kit.trace.cpu, ramEvery: kit.trace.ram_every, audio: kit.trace.audio },
     webgpuFrames: frameCompareFor(kit, "webgpu"),
   };
 }
@@ -47,6 +51,8 @@ export function loadFixture(dir: string, fixturesRoot = path.resolve("tests/fixt
   const expectedDir = path.join(dir, "expected");
   const expectedTtyPath = path.join(expectedDir, config.kit.compare.tty?.path ?? "tty.txt");
   const expectedCpuPath = path.join(expectedDir, config.kit.compare.cpu?.path ?? "cpu.jsonl");
+  const expectedAudioPath = path.join(expectedDir, "audio.jsonl");
+  const inputPath = config.kit.input ? path.join(dir, config.kit.input) : undefined;
   const manifestPath = path.join(expectedDir, "manifest.json");
   return {
     name,
@@ -57,6 +63,8 @@ export function loadFixture(dir: string, fixturesRoot = path.resolve("tests/fixt
     expectedDir,
     expectedTtyPath: existsSync(expectedTtyPath) ? expectedTtyPath : undefined,
     expectedCpuPath: existsSync(expectedCpuPath) ? expectedCpuPath : undefined,
+    expectedAudioPath: config.trace.audio && existsSync(expectedAudioPath) ? expectedAudioPath : undefined,
+    inputPath: inputPath && existsSync(inputPath) ? inputPath : undefined,
     manifest: existsSync(manifestPath) ? (JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>) : undefined,
   };
 }
@@ -125,7 +133,7 @@ export type CpuVerdict = ReturnType<typeof jsonlHashDiff> & { reason: string | u
 
 // The oracle may have recorded more frames than test.toml asks for; the run
 // covers `frames` vsyncs, so the reference is the first `frames` records.
-export function compareCpu(expectedJsonl: string, actualJsonl: string, frames: number): CpuVerdict {
+export function compareJsonl(name: string, expectedJsonl: string, actualJsonl: string, frames: number): CpuVerdict {
   const expectedAll = splitLines(expectedJsonl);
   const expected = expectedAll.slice(0, frames);
   const result = jsonlHashDiff(`${expected.join("\n")}\n`, actualJsonl);
@@ -134,9 +142,59 @@ export function compareCpu(expectedJsonl: string, actualJsonl: string, frames: n
     ...result,
     expectedRecordsTotal: expectedAll.length,
     reason: result.ok ? undefined : divergence
-      ? `cpu.jsonl diverges at record ${divergence.line}${divergence.changedKeys ? ` (keys ${divergence.changedKeys.join(", ")})` : ""}: expected ${JSON.stringify(divergence.expected)}, actual ${JSON.stringify(divergence.actual)} (${result.actualRecords}/${result.expectedRecords} records)`
-      : "cpu.jsonl differs",
+      ? `${name} diverges at record ${divergence.line}${divergence.changedKeys ? ` (keys ${divergence.changedKeys.join(", ")})` : ""}: expected ${JSON.stringify(divergence.expected)}, actual ${JSON.stringify(divergence.actual)} (${result.actualRecords}/${result.expectedRecords} records)`
+      : `${name} differs`,
   };
+}
+
+export function compareCpu(expectedJsonl: string, actualJsonl: string, frames: number): CpuVerdict {
+  return compareJsonl("cpu.jsonl", expectedJsonl, actualJsonl, frames);
+}
+
+export function compareAudio(expectedJsonl: string, actualJsonl: string, frames: number): CpuVerdict {
+  return compareJsonl("audio.jsonl", expectedJsonl, actualJsonl, frames);
+}
+
+export type InputTraceEntry = {
+  frame: number;
+  port: 0 | 1;
+  digital1: number;
+  digital2: number;
+  leftX: number;
+  leftY: number;
+  rightX: number;
+  rightY: number;
+  pressure: Record<string, number>;
+};
+
+// The frame a recording frame applies at. PCSX2's replay increments its frame
+// counter before reading the frame's data on every vsync (InputRecording::
+// incFrameCounter, then handleControllerDataUpdate in PollInputOnCPUThread),
+// so recording frame i drives the vsync whose g_FrameCount is i - 1 and
+// frame 0 is never read. The host schedule is keyed on g_FrameCount.
+export const P2M2_FRAME_OFFSET = -1;
+
+/**
+ * Converts a .p2m2 recording into the frame-indexed pad states the page API's
+ * `inputTrace` option takes: one full state per port at every recording
+ * frame where that port's state changes (the first frame included), for the
+ * run's first `frames` vsyncs.
+ */
+export function inputTraceFromP2m2(bytes: Uint8Array, frames: number): InputTraceEntry[] {
+  const recording = decodeP2m2(bytes);
+  const entries: InputTraceEntry[] = [];
+  const previous: Array<string | undefined> = [undefined, undefined];
+  for (let index = 0; index < recording.frames.length; index += 1) {
+    const frame = index + P2M2_FRAME_OFFSET;
+    if (frame < 0 || frame >= frames) continue;
+    recording.frames[index]!.forEach((state, port) => {
+      const key = JSON.stringify(state);
+      if (previous[port] === key) return;
+      previous[port] = key;
+      entries.push({ frame, port: port as 0 | 1, ...state });
+    });
+  }
+  return entries;
 }
 
 export type RunReportLike = {
@@ -146,22 +204,25 @@ export type RunReportLike = {
   frames?: unknown[];
   tty?: string[];
   shutdown?: { stoppedCleanly?: boolean; detail?: string };
-  emu?: { statusName?: string; observedFrames?: number; requestedFrames?: number; trace?: { supported?: boolean }; cpuJsonl?: string; logs?: string[] };
+  emu?: { statusName?: string; observedFrames?: number; requestedFrames?: number; trace?: { supported?: boolean }; cpuJsonl?: string; audioJsonl?: string; logs?: string[]; inputTrace?: { applied?: number; scheduled?: number }; audio?: Record<string, unknown> };
 };
 
 /** A readable failure summary: the run's own verdict, the TTY captured so far, and the first divergence. */
-export function summarizeRun(name: string, report: RunReportLike, verdicts: { tty?: TtyVerdict; cpu?: CpuVerdict; ttyTail?: number } = {}): string {
+export function summarizeRun(name: string, report: RunReportLike, verdicts: { tty?: TtyVerdict; cpu?: CpuVerdict; audio?: CpuVerdict; ttyTail?: number } = {}): string {
   const ttyTail = verdicts.ttyTail ?? 30;
   const tty = report.tty ?? [];
   const lines = [
     `${name}: ${report.ok ? "ran" : "FAILED"}; ${report.detail ?? "no detail"}`,
     `status ${report.emu?.statusName ?? "unknown"} · bootResult ${report.bootResult ?? "n/a"} · frames ${report.emu?.observedFrames ?? report.frames?.length ?? 0}/${report.emu?.requestedFrames ?? "?"} · shutdown ${report.shutdown?.stoppedCleanly ? "clean" : `not clean (${report.shutdown?.detail ?? "no report"})`}`,
-    `cpu trace ${report.emu?.trace?.supported ? `supported, ${splitLines(report.emu?.cpuJsonl ?? "").length} records` : "not exported by this build"}`,
+    `cpu trace ${report.emu?.trace?.supported ? `supported, ${splitLines(report.emu?.cpuJsonl ?? "").length} records` : "not exported by this build"}${report.emu?.audioJsonl !== undefined ? ` · audio trace ${splitLines(report.emu.audioJsonl).length} records` : ""}`,
+    ...(report.emu?.inputTrace?.scheduled ? [`pad: ${report.emu.inputTrace.scheduled} scheduled states, ${report.emu.inputTrace.applied ?? 0} applications`] : []),
+    ...(report.emu?.audio && (report.emu.audio as { requested?: boolean }).requested ? [`audio: ${JSON.stringify(report.emu.audio)}`] : []),
     `tty: ${tty.length} lines captured${tty.length ? `, last ${Math.min(ttyTail, tty.length)}:` : ""}`,
     ...tty.slice(-ttyTail).map((line) => `  | ${line}`),
   ];
   if (verdicts.tty) lines.push(`tty comparison: ${verdicts.tty.ok ? "match" : verdicts.tty.reason} (${verdicts.tty.actualLines} actual / ${verdicts.tty.expectedLines} expected filtered lines)`);
   if (verdicts.cpu) lines.push(`cpu comparison: ${verdicts.cpu.ok ? "match" : verdicts.cpu.reason}`);
+  if (verdicts.audio) lines.push(`audio comparison: ${verdicts.audio.ok ? "match" : verdicts.audio.reason}`);
   const logs = report.emu?.logs ?? [];
   if (!report.ok && logs.length) lines.push(`module log tail:`, ...logs.slice(-10).map((line) => `  > ${line}`));
   return lines.join("\n");

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { compareCpu, compareTty, discoverFixtures, filterTty, parseFixtureToml, summarizeRun, ttyPayload } from "./support/fixtures";
+import { DIGITAL1, DIGITAL2, encodeP2m2 } from "@appmana-public/web-emulator-harness/p2m2";
+import { compareAudio, compareCpu, compareTty, discoverFixtures, filterTty, inputTraceFromP2m2, parseFixtureToml, summarizeRun, ttyPayload } from "./support/fixtures";
 
 const fixturesRoot = path.resolve("tests/fixtures");
 
@@ -16,7 +17,7 @@ describe("fixture test.toml", () => {
     expect(config.kit.bios).toEqual({ required: true });
     expect(config.biosRequired).toBe(true);
     expect(config.ttyFilter?.source).toBe("^[A-Z][A-Z0-9_]*(=.*)?$");
-    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 100 });
+    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 100, audio: false });
     expect(config.kit.compare.tty?.mode).toBe("exact");
     expect(config.kit.compare.cpu?.mode).toBe("exact");
     expect(config.kit.compare.frames?.mode).toBe("md5");
@@ -28,7 +29,7 @@ describe("fixture test.toml", () => {
     const config = parseFixtureToml('target = "x.elf"\nframes = 2\nbios = "ps2/scph39001.bin"\n');
     expect(config.kit.bios).toEqual({ required: true, path: "ps2/scph39001.bin" });
     expect(config.biosRequired).toBe(true);
-    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 0 });
+    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 0, audio: false });
     expect(config.ttyFilter).toBeUndefined();
     expect(() => parseFixtureToml('target = "x.elf"\nframes = 2\n[compare.tty]\nmode = "exact"\nline_filter = "("\n')).toThrow(/line_filter/);
     expect(() => parseFixtureToml('frames = 2\n')).toThrow(/target/);
@@ -36,13 +37,60 @@ describe("fixture test.toml", () => {
 
   it("discovers every fixture with its recorded oracle outputs", () => {
     const fixtures = discoverFixtures(fixturesRoot);
-    expect(fixtures.map((fixture) => fixture.name)).toEqual(["gs_blend", "gs_sprite", "hello_tty", "vu1_cube"]);
+    expect(fixtures.map((fixture) => fixture.name)).toEqual(["gs_blend", "gs_sprite", "hello_tty", "pad_echo", "vu1_cube"]);
     const hello = fixtures.find((fixture) => fixture.name === "hello_tty")!;
     expect(hello.targetUrl).toBe("tests/fixtures/hello_tty/hello_tty.elf");
     expect(hello.elfPath).toBe(path.join(fixturesRoot, "hello_tty", "hello_tty.elf"));
     expect(hello.expectedTtyPath).toBe(path.join(fixturesRoot, "hello_tty", "expected", "tty.txt"));
     expect(hello.expectedCpuPath).toBe(path.join(fixturesRoot, "hello_tty", "expected", "cpu.jsonl"));
     expect(hello.manifest?.renderer).toBe("Software");
+    expect(hello.inputPath).toBeUndefined();
+    expect(hello.expectedAudioPath).toBeUndefined();
+  });
+
+  it("binds pad_echo's input recording and audio oracle", () => {
+    const pad = discoverFixtures(fixturesRoot).find((fixture) => fixture.name === "pad_echo")!;
+    expect(pad.config.trace).toEqual({ tty: true, cpu: true, ramEvery: 100, audio: true });
+    expect(pad.inputPath).toBe(path.join(fixturesRoot, "pad_echo", "input.p2m2"));
+    expect(pad.expectedAudioPath).toBe(path.join(fixturesRoot, "pad_echo", "expected", "audio.jsonl"));
+    expect(pad.manifest?.input).toMatch(/pad_echo\/input\.p2m2$/);
+  });
+});
+
+describe("input recording to pad schedule", () => {
+  const recording = encodeP2m2({
+    entries: [
+      { frame: 3, digital2: DIGITAL2.cross },
+      { frame: 5, digital1: DIGITAL1.up, leftX: 10, pressure: { cross: 0x40 } },
+      { frame: 5, port: 1, digital2: DIGITAL2.circle },
+      { frame: 8, digital1: 0, digital2: 0, leftX: 127 },
+    ],
+    totalFrames: 12,
+  });
+
+  it("applies recording frame i at guest frame i - 1 and skips frame 0", () => {
+    const entries = inputTraceFromP2m2(recording, 12);
+    expect(entries.map((entry) => [entry.frame, entry.port])).toEqual([[0, 0], [0, 1], [2, 0], [4, 0], [4, 1], [7, 0]]);
+    expect(entries[0]).toMatchObject({ frame: 0, port: 0, digital1: 0, digital2: 0, leftX: 127, leftY: 127, rightX: 127, rightY: 127, pressure: {} });
+    expect(entries[2]).toMatchObject({ frame: 2, digital2: DIGITAL2.cross, pressure: { cross: 255 } });
+    expect(entries[3]).toMatchObject({ frame: 4, port: 0, digital1: DIGITAL1.up, digital2: DIGITAL2.cross, leftX: 10, pressure: { up: 255, cross: 0x40 } });
+    expect(entries[4]).toMatchObject({ frame: 4, port: 1, digital2: DIGITAL2.circle, pressure: { circle: 255 } });
+    expect(entries[5]).toMatchObject({ frame: 7, digital1: 0, digital2: 0, leftX: 127, pressure: {} });
+  });
+
+  it("keeps only the run's frames", () => {
+    expect(inputTraceFromP2m2(recording, 5).map((entry) => entry.frame)).toEqual([0, 0, 2, 4, 4]);
+    expect(inputTraceFromP2m2(recording, 4).map((entry) => entry.frame)).toEqual([0, 0, 2]);
+  });
+});
+
+describe("audio comparison", () => {
+  it("compares the first frames of the oracle's audio.jsonl", () => {
+    const expected = '{"frame":0,"frames":0,"hash":"2d06800538d394c2"}\n{"frame":1,"frames":768,"hash":"d758bee327ee22e6"}\n{"frame":2,"frames":768,"hash":"0000000000000000"}\n';
+    expect(compareAudio(expected, '{"frame":0,"frames":0,"hash":"2d06800538d394c2"}\n{"frame":1,"frames":768,"hash":"d758bee327ee22e6"}\n', 2).ok).toBe(true);
+    const verdict = compareAudio(expected, '{"frame":0,"frames":0,"hash":"2d06800538d394c2"}\n{"frame":1,"frames":768,"hash":"ffffffffffffffff"}\n', 2);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toMatch(/^audio\.jsonl diverges at record 2/);
   });
 });
 
