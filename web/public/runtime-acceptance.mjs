@@ -1,10 +1,14 @@
 // The page side of the kit contract (@appmana-public/web-emulator-harness
 // src/contract.js): window.__pcsx2Runtime = { run, stop, setPad, snapshot,
 // exportInputTrace }. The module itself lives in runtime-worker.mjs; this
-// page fetches the BIOS from origin-private storage and the ELF from its
-// fixture URL, hands both to the worker, and relays the report.
+// page fetches the BIOS from origin-private storage and the target either
+// from its fixture URL (an ELF) or names it in storage (a "/opfs/..." path:
+// an ELF is read and handed over, a disc image stays in storage and is opened
+// by the core's OPFS reader), hands everything to the worker, and relays the
+// report.
 const BIOS_DIR = "pcsx2/bios";
 const MOUNT_ROOT = "/opfs";
+const DISC_EXTENSIONS = /\.(iso|bin|img|mdf|chd|cso|zso|gz|dump)$/i;
 
 /** @type {Worker | undefined} */
 let activeWorker;
@@ -72,9 +76,21 @@ async function fetchTarget(target) {
   return { name, bytes };
 }
 
+// Resolves a run target to what the worker boots: { elf } for an ELF (fetched
+// from its URL or read from storage) or { disc } for a disc image in storage,
+// named by its mount path so the core opens it in place.
+async function resolveTarget(target) {
+  if (!String(target).startsWith(`${MOUNT_ROOT}/`)) return { elf: await fetchTarget(target) };
+  const relative = storageRelative(target);
+  if (DISC_EXTENSIONS.test(relative)) return { disc: { path: `${MOUNT_ROOT}/${relative}` } };
+  return { elf: await readStoredFile(relative) };
+}
+
 // target: the URL of an ELF relative to this page, for example
 // "tests/fixtures/hello_tty/hello_tty.elf" (served from the repository's
-// fixture tree). options: frames, render, renderer, bios (storage path of the
+// fixture tree), or the mount path of a stored file such as
+// "/opfs/games/game.iso" (ISO/BIN or CHD; an ELF there is staged like a
+// fetched one). options: frames, render, renderer, bios (storage path of the
 // BIOS file), settings (Section/Key -> value), cpu, trace { cpu, ramEvery,
 // tty }, timeoutMs, pthreadPoolSize, coreUrl, pad.
 function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
@@ -86,8 +102,9 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
     const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
     showStatus(`loading ${target}`);
     const biosPath = options.bios ? storageRelative(options.bios) : await defaultBiosPath();
-    const [bios, elf] = await Promise.all([readStoredFile(biosPath), fetchTarget(target)]);
-    showStatus(`booting ${elf.name} with ${bios.name}`);
+    const [bios, resolved] = await Promise.all([readStoredFile(biosPath), resolveTarget(target)]);
+    const { elf, disc } = resolved;
+    showStatus(`booting ${elf ? elf.name : disc.path} with ${bios.name}`);
     const worker = new Worker("./runtime-worker.mjs", { type: "module" });
     activeWorker = worker;
     const events = [];
@@ -125,6 +142,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         pthreadPoolSize: options.pthreadPoolSize,
         bios,
         elf,
+        disc,
         render: options.render,
         renderer: options.renderer,
         settings: options.settings ?? {},
@@ -134,7 +152,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         timeoutMs,
         progressIntervalMs: options.progressIntervalMs,
         pad: options.pad ?? currentPad,
-      }, [bios.bytes, elf.bytes]);
+      }, elf ? [bios.bytes, elf.bytes] : [bios.bytes]);
     }).finally(() => {
       if (activeWorker === worker) activeWorker = undefined;
       worker.terminate();
