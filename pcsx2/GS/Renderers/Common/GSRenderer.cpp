@@ -1028,17 +1028,11 @@ bool GSRenderer::IsIdleFrame() const
 	return (m_last_draw_n == s_n && m_last_transfer_n == s_transfer_n);
 }
 
-bool GSRenderer::SaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
-	u32* width, u32* height, std::vector<u32>* pixels)
+bool GSRenderer::PrepareSnapshotDownload(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders, SnapshotDownload* sd)
 {
 	GSTexture* const current = g_gs_device->GetCurrent();
 	if (!current)
-	{
-		*width = 0;
-		*height = 0;
-		pixels->clear();
 		return false;
-	}
 
 	const GSVector4i src_rect(CalculateDrawSrcRect(current, m_real_size));
 	const GSVector4 src_uv(GSVector4(src_rect) / GSVector4(current->GetSize()).xyxy());
@@ -1072,46 +1066,98 @@ bool GSRenderer::SaveSnapshotToMemory(u32 window_width, u32 window_height, bool 
 		draw_rect = CalculateDrawDstRect(window_width, window_height, src_rect, current->GetSize(),
 			GSDisplayAlignment::LeftOrTop, false, is_progressive);
 	}
-	const u32 draw_width = static_cast<u32>(draw_rect.z - draw_rect.x);
-	const u32 draw_height = static_cast<u32>(draw_rect.w - draw_rect.y);
-	const u32 image_width = crop_borders ? draw_width : std::max(draw_width, window_width);
-	const u32 image_height = crop_borders ? draw_height : std::max(draw_height, window_height);
+	sd->draw_width = static_cast<u32>(draw_rect.z - draw_rect.x);
+	sd->draw_height = static_cast<u32>(draw_rect.w - draw_rect.y);
+	sd->image_width = crop_borders ? sd->draw_width : std::max(sd->draw_width, window_width);
+	sd->image_height = crop_borders ? sd->draw_height : std::max(sd->draw_height, window_height);
 
 	// We're not expecting screenshots to be fast, so just allocate a download texture on demand.
-	GSTexture* rt = g_gs_device->CreateRenderTarget(draw_width, draw_height, GSTexture::Format::Color, false);
-	if (rt)
+	sd->rt = g_gs_device->CreateRenderTarget(sd->draw_width, sd->draw_height, GSTexture::Format::Color, false);
+	if (!sd->rt)
+		return false;
+
+	sd->dl = g_gs_device->CreateDownloadTexture(sd->draw_width, sd->draw_height, GSTexture::Format::Color);
+	if (!sd->dl)
 	{
-		std::unique_ptr<GSDownloadTexture> dl(g_gs_device->CreateDownloadTexture(draw_width, draw_height, GSTexture::Format::Color));
-		if (dl)
-		{
-			const GSVector4i rc(0, 0, draw_width, draw_height);
-			g_gs_device->StretchRect(current, src_uv, rt, GSVector4(rc), ShaderConvert::TRANSPARENCY_FILTER, Biln);
-			dl->CopyFromTexture(rc, rt, rc, 0);
-			dl->Flush();
+		g_gs_device->Recycle(sd->rt);
+		sd->rt = nullptr;
+		return false;
+	}
 
-			if (dl->Map(rc))
-			{
-				const u32 pad_x = (image_width - draw_width) / 2;
-				const u32 pad_y = (image_height - draw_height) / 2;
-				pixels->clear();
-				pixels->resize(image_width * image_height, 0);
-				*width = image_width;
-				*height = image_height;
-				StringUtil::StrideMemCpy(pixels->data() + pad_y * image_width + pad_x, image_width * sizeof(u32), dl->GetMapPointer(),
-					dl->GetMapPitch(), draw_width * sizeof(u32), draw_height);
+	const GSVector4i rc(0, 0, sd->draw_width, sd->draw_height);
+	g_gs_device->StretchRect(current, src_uv, sd->rt, GSVector4(rc), ShaderConvert::TRANSPARENCY_FILTER, Biln);
+	sd->dl->CopyFromTexture(rc, sd->rt, rc, 0);
+	sd->dl->Flush();
+	return true;
+}
 
-				g_gs_device->Recycle(rt);
-				return true;
-			}
-		}
+void GSRenderer::CopySnapshotPixels(const SnapshotDownload& sd, u32* width, u32* height, std::vector<u32>* pixels)
+{
+	const u32 pad_x = (sd.image_width - sd.draw_width) / 2;
+	const u32 pad_y = (sd.image_height - sd.draw_height) / 2;
+	pixels->clear();
+	pixels->resize(sd.image_width * sd.image_height, 0);
+	*width = sd.image_width;
+	*height = sd.image_height;
+	StringUtil::StrideMemCpy(pixels->data() + pad_y * sd.image_width + pad_x, sd.image_width * sizeof(u32), sd.dl->GetMapPointer(),
+		sd.dl->GetMapPitch(), sd.draw_width * sizeof(u32), sd.draw_height);
+}
 
-		g_gs_device->Recycle(rt);
+bool GSRenderer::SaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
+	u32* width, u32* height, std::vector<u32>* pixels)
+{
+	SnapshotDownload sd;
+	if (PrepareSnapshotDownload(window_width, window_height, apply_aspect, crop_borders, &sd))
+	{
+		const GSVector4i rc(0, 0, sd.draw_width, sd.draw_height);
+		const bool mapped = sd.dl->Map(rc);
+		if (mapped)
+			CopySnapshotPixels(sd, width, height, pixels);
+
+		g_gs_device->Recycle(sd.rt);
+		if (mapped)
+			return true;
 	}
 
 	*width = 0;
 	*height = 0;
 	pixels->clear();
 	return false;
+}
+
+bool GSRenderer::SaveSnapshotToMemoryAsync(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
+	SnapshotCallback callback)
+{
+	std::unique_ptr<SnapshotDownload> sd = std::make_unique<SnapshotDownload>();
+	if (!PrepareSnapshotDownload(window_width, window_height, apply_aspect, crop_borders, sd.get()))
+		return false;
+
+	SnapshotDownload* const state = sd.get();
+	const bool queued = state->dl->MapAsync([state, callback = std::move(callback)](bool mapped) {
+		// Runs on the GS thread's event loop; the device may already be gone if the renderer closed.
+		std::unique_ptr<SnapshotDownload> owned(state);
+		u32 width = 0;
+		u32 height = 0;
+		std::vector<u32> pixels;
+		if (mapped)
+			CopySnapshotPixels(*owned, &width, &height, &pixels);
+
+		if (g_gs_device)
+			g_gs_device->Recycle(owned->rt);
+		else
+			delete owned->rt;
+		owned->dl.reset();
+		callback(width, height, std::move(pixels));
+	});
+
+	if (!queued)
+	{
+		g_gs_device->Recycle(sd->rt);
+		return false;
+	}
+
+	sd.release();
+	return true;
 }
 
 void DumpGSPrivRegs(const GSPrivRegSet& r, const std::string& filename)

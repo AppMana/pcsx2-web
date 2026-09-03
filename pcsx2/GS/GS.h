@@ -59,6 +59,11 @@ s16 GSLookupMoveHandlerFunctionId(const std::string_view name);
 
 bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* basemem,
 	GSVSyncMode vsync_mode, bool allow_present_throttle);
+#ifdef PCSX2_WEB
+/// True after GSopen() returned with the device still being created on the GS thread's event loop;
+/// MTGS::WebOpenComplete() is called with the outcome.
+bool GSIsOpenPending();
+#endif
 bool GSreopen(bool recreate_device, bool recreate_renderer, GSRendererType new_renderer,
 	std::optional<const Pcsx2Config::GSOptions*> old_config);
 void GSreset(bool hardware_reset);
