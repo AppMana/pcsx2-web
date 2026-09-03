@@ -1,16 +1,13 @@
-// Fixture discovery and the toml-driven expectations for the e2e specs.
-// The fixture test.toml files carry PCSX2 extensions the kit's loader does
-// not know (a TTY line regex in `filter`, `trace.tty`/`trace.cpu`, a boolean
-// `bios`, and `[compare.frames.webgpu]`); those are lifted out here and the
-// remainder goes through the kit's parseTestToml so its validation still
-// applies.
+// Fixture discovery and the toml-driven expectations for the e2e specs. The
+// fixture test.toml files use the kit's converged schema (boolean `bios`,
+// `[trace]`, `line_filter` under `[compare.tty]`, per-renderer overrides under
+// `[compare.frames]`), so the kit loader is used directly.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import { parseTestToml, type TestConfig } from "@appmana-public/web-emulator-harness/test-toml";
+import { frameCompareFor, parseTestToml, type CompareSpec, type TestConfig } from "@appmana-public/web-emulator-harness/test-toml";
 import { exactText, jsonlHashDiff } from "@appmana-public/web-emulator-harness/compare";
 
-export type WebGpuFrameCompare = { mode: string; max_rmse?: number; min_close_pixels?: number; trigger?: Array<number | string> };
+export type WebGpuFrameCompare = CompareSpec;
 
 export type Pcsx2TestConfig = {
   kit: TestConfig;
@@ -33,41 +30,14 @@ export type Fixture = {
   manifest: Record<string, unknown> | undefined;
 };
 
-const isTable = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
 export function parseFixtureToml(text: string): Pcsx2TestConfig {
-  const document = parseToml(text) as Record<string, unknown>;
-  const { filter, trace, compare, bios, ...rest } = document;
-  const traceTable = isTable(trace) ? trace : {};
-  const kitTrace: Record<string, unknown> = {};
-  if (typeof traceTable.ram_every === "number") kitTrace.ram_every = traceTable.ram_every;
-  if (typeof traceTable.blocks === "boolean") kitTrace.blocks = traceTable.blocks;
-
-  let webgpuFrames: WebGpuFrameCompare | undefined;
-  const kitCompare: Record<string, unknown> = isTable(compare) ? { ...compare } : {};
-  if (isTable(kitCompare.frames) && isTable(kitCompare.frames.webgpu)) {
-    const { webgpu, ...frames } = kitCompare.frames;
-    webgpuFrames = webgpu as WebGpuFrameCompare;
-    kitCompare.frames = frames;
-  }
-
-  const kitDocument: Record<string, unknown> = { ...rest };
-  if (typeof bios === "string") kitDocument.bios = bios;
-  if (Object.keys(kitTrace).length) kitDocument.trace = kitTrace;
-  if (Object.keys(kitCompare).length) kitDocument.compare = kitCompare;
-  const kit = parseTestToml(stringifyToml(kitDocument));
-
-  if (filter !== undefined && typeof filter !== "string") throw new TypeError("filter must be a regular expression string");
+  const kit = parseTestToml(text);
   return {
     kit,
-    biosRequired: bios === true || typeof bios === "string",
-    ttyFilter: typeof filter === "string" ? new RegExp(filter) : undefined,
-    trace: {
-      tty: traceTable.tty !== false,
-      cpu: traceTable.cpu === true,
-      ramEvery: typeof kitTrace.ram_every === "number" ? kitTrace.ram_every : 0,
-    },
-    webgpuFrames,
+    biosRequired: kit.bios.required,
+    ttyFilter: kit.compare.tty?.lineFilter,
+    trace: { tty: kit.trace.tty, cpu: kit.trace.cpu, ramEvery: kit.trace.ram_every },
+    webgpuFrames: frameCompareFor(kit, "webgpu"),
   };
 }
 

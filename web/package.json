@@ -27,8 +27,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@appmana-public/disc-images": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=742b7b9aef1a1531807dbf187947fdf057f85f56",
-    "@appmana-public/web-emulator-harness": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
+    "@appmana-public/disc-images": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=0285bf79efcd61d93df5648c42440c2628083810",
+    "@appmana-public/web-emulator-harness": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=0285bf79efcd61d93df5648c42440c2628083810"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

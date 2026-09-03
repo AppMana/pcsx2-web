@@ -6,30 +6,31 @@ import { compareCpu, compareTty, discoverFixtures, filterTty, parseFixtureToml, 
 const fixturesRoot = path.resolve("tests/fixtures");
 
 describe("fixture test.toml", () => {
-  it("lifts the PCSX2 extensions and validates the rest with the kit", () => {
+  it("reads the converged kit schema from the hello_tty fixture", () => {
     const config = parseFixtureToml(readFileSync(path.join(fixturesRoot, "hello_tty", "test.toml"), "utf8"));
     expect(config.kit.target).toBe("hello_tty.elf");
-    expect(config.kit.frames).toBe(120);
+    expect(config.kit.frames).toBe(600);
     expect(config.kit.renderer).toEqual(["sw", "webgpu"]);
     expect(config.kit.cpu).toBe("interpreter");
     expect(config.kit.known_failure).toBe(false);
-    expect(config.kit.bios).toBeUndefined();
+    expect(config.kit.bios).toEqual({ required: true });
     expect(config.biosRequired).toBe(true);
     expect(config.ttyFilter?.source).toBe("^[A-Z][A-Z0-9_]*(=.*)?$");
-    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 60 });
-    expect(config.kit.trace).toEqual({ ram_every: 60 });
-    expect(config.kit.compare.tty).toEqual({ mode: "exact", path: "tty.txt", trigger: ["last_frame"], known_failure: false });
+    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 100 });
+    expect(config.kit.compare.tty?.mode).toBe("exact");
     expect(config.kit.compare.cpu?.mode).toBe("exact");
-    expect(config.kit.compare.frames).toEqual({ mode: "md5", path: "frames", trigger: [60, 120], known_failure: false });
-    expect(config.webgpuFrames).toEqual({ mode: "rmse", max_rmse: 1.0, min_close_pixels: 0.99, trigger: [60, 120] });
+    expect(config.kit.compare.frames?.mode).toBe("md5");
+    expect(config.kit.compare.frames?.trigger).toEqual([500, 600]);
+    expect(config.webgpuFrames).toMatchObject({ mode: "rmse", max_rmse: 1.0, min_close_pixels: 0.99, trigger: [500, 600] });
   });
 
-  it("keeps a string bios and rejects a non string filter", () => {
+  it("keeps a string bios and rejects a bad line filter", () => {
     const config = parseFixtureToml('target = "x.elf"\nframes = 2\nbios = "ps2/scph39001.bin"\n');
-    expect(config.kit.bios).toBe("ps2/scph39001.bin");
+    expect(config.kit.bios).toEqual({ required: true, path: "ps2/scph39001.bin" });
     expect(config.biosRequired).toBe(true);
-    expect(config.trace).toEqual({ tty: true, cpu: false, ramEvery: 0 });
-    expect(() => parseFixtureToml('target = "x.elf"\nframes = 2\nfilter = 3\n')).toThrow(/regular expression/);
+    expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 0 });
+    expect(config.ttyFilter).toBeUndefined();
+    expect(() => parseFixtureToml('target = "x.elf"\nframes = 2\n[compare.tty]\nline_filter = "("\n')).toThrow(/line_filter/);
     expect(() => parseFixtureToml('frames = 2\n')).toThrow(/target/);
   });
 

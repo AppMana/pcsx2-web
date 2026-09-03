@@ -5,9 +5,9 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
-"@appmana-public/disc-images@https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=742b7b9aef1a1531807dbf187947fdf057f85f56":
+"@appmana-public/disc-images@https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=0285bf79efcd61d93df5648c42440c2628083810":
   version: 0.1.0
-  resolution: "@appmana-public/disc-images@https://github.com/AppMana/web-emulator-kit.git#workspace=%40appmana-public%2Fdisc-images&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
+  resolution: "@appmana-public/disc-images@https://github.com/AppMana/web-emulator-kit.git#workspace=%40appmana-public%2Fdisc-images&commit=0285bf79efcd61d93df5648c42440c2628083810"
   peerDependencies:
     playwright: ">=1.40"
   peerDependenciesMeta:
@@ -21,9 +21,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@appmana-public/web-emulator-harness@https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=742b7b9aef1a1531807dbf187947fdf057f85f56":
+"@appmana-public/web-emulator-harness@https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=0285bf79efcd61d93df5648c42440c2628083810":
   version: 0.1.0
-  resolution: "@appmana-public/web-emulator-harness@https://github.com/AppMana/web-emulator-kit.git#workspace=%40appmana-public%2Fweb-emulator-harness&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
+  resolution: "@appmana-public/web-emulator-harness@https://github.com/AppMana/web-emulator-kit.git#workspace=%40appmana-public%2Fweb-emulator-harness&commit=0285bf79efcd61d93df5648c42440c2628083810"
   dependencies:
     coi-serviceworker: "npm:0.1.7"
     pngjs: "npm:7.0.0"
@@ -40,7 +40,7 @@ __metadata:
     compare-frames: ./bin/compare-frames.js
     hardware-acceptance: ./bin/hardware-acceptance.js
     p2m2-from-trace: ./bin/p2m2-from-trace.js
-  checksum: 10c0/f2065cac051cb7a35b7bba21f4bd86942da6cc573c8e98f92612cde896e013df36dadb7fe00e3187e8dd5ac72eb9fa35966f4eb186cfb8d7682a8cb4879c45cc
+  checksum: 10c0/e94a43a0642b56ed7b561d7110e2f5430d6bbd6614d1f2ca4b5cef3134b250d30b2a3838165618db799b2cafd09b9eb506e580bf140915462624097b383b6521
   languageName: node
   linkType: hard
 
@@ -944,8 +944,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "pcsx2-web@workspace:."
   dependencies:
-    "@appmana-public/disc-images": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
-    "@appmana-public/web-emulator-harness": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
+    "@appmana-public/disc-images": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=0285bf79efcd61d93df5648c42440c2628083810"
+    "@appmana-public/web-emulator-harness": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=0285bf79efcd61d93df5648c42440c2628083810"
     "@playwright/test": "npm:1.62.1"
     "@types/node": "npm:24.3.0"
     "@types/pngjs": "npm:6.0.5"

@@ -33,8 +33,8 @@ runs produce byte identical ELFs; the script prints the sha256 of each.
 * `fixture_tty.c`: console output through libkernel's `sio_putc`, which
   stores bytes to the EE SIO transmit FIFO at `0x1000F180`. PCSX2 line
   buffers exactly that address into its EE console. Every line has the form
-  `KEY=VALUE`; a harness can filter fixture lines from BIOS output with the
-  `filter` regex in `test.toml`.
+  `KEY=VALUE`; a harness keeps only the fixture's own lines with the
+  `line_filter` regex under `[compare.tty]` in `test.toml`.
 * `fixture_gs.c`: the shared display, NTSC interlaced FIELD mode with a
   640x448 PSMCT32 frame buffer and a 32 bit Z buffer, plus helpers that emit
   single A+D register writes and a full screen clear.
@@ -43,18 +43,17 @@ runs produce byte identical ELFs; the script prints the sha256 of each.
 ## test.toml
 
     target = "name.elf"        # ELF to boot, relative to the fixture directory
-    frames = 240               # vsyncs to run
+    frames = 800               # vsyncs to run from power-on, BIOS boot included
     bios = true                # a real BIOS image is required (never committed)
     renderer = ["sw", "webgpu"]
     cpu = "interpreter"
     input = ""                 # .p2m2 replay, empty for none
     known_failure = false      # self baseline instead of a hard failure
-    filter = "regex"           # keep only matching TTY lines before comparing
 
     [trace]                    # what the tracerunner records
     tty = true
     cpu = true                 # per vsync register hashes
-    ram_every = 60             # RAM hash every N frames, 0 disables
+    ram_every = 100            # RAM hash every N frames, 0 disables
 
     [compare.tty]  mode = "exact"
     [compare.cpu]  mode = "exact"
