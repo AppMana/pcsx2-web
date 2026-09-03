@@ -34,6 +34,10 @@
 #include "GS/Renderers/Vulkan/GSDeviceVK.h"
 #endif
 
+#ifdef ENABLE_WEBGPU
+#include "GS/Renderers/WebGPU/GSDeviceWebGPU.h"
+#endif
+
 #ifdef _WIN32
 
 #include "GS/Renderers/DX11/GSDevice11.h"
@@ -85,6 +89,9 @@ static RenderAPI GetAPIForRenderer(GSRendererType renderer)
 		case GSRendererType::VK:
 			return RenderAPI::Vulkan;
 
+		case GSRendererType::WebGPU:
+			return RenderAPI::WebGPU;
+
 #ifdef _WIN32
 		case GSRendererType::DX11:
 			return RenderAPI::D3D11;
@@ -132,6 +139,12 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool
 #ifdef ENABLE_VULKAN
 		case RenderAPI::Vulkan:
 			g_gs_device = std::make_unique<GSDeviceVK>();
+			break;
+#endif
+
+#ifdef ENABLE_WEBGPU
+		case RenderAPI::WebGPU:
+			g_gs_device = std::make_unique<GSDeviceWebGPU>();
 			break;
 #endif
 
@@ -615,6 +628,14 @@ std::vector<GSAdapterInfo> GSGetAdapterInfo(GSRendererType renderer)
 		case GSRendererType::VK:
 		{
 			ret = GSDeviceVK::GetAdapterInfo();
+		}
+		break;
+#endif
+
+#ifdef ENABLE_WEBGPU
+		case GSRendererType::WebGPU:
+		{
+			ret = GSDeviceWebGPU::GetAdapterInfo();
 		}
 		break;
 #endif

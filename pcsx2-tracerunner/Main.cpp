@@ -821,6 +821,10 @@ bool TraceRunner::ParseCommandLineArgs(int argc, char* argv[], VMBootParameters&
 				else if (StringUtil::Strcasecmp(rname, "vulkan") == 0)
 					type = GSRendererType::VK;
 #endif
+#ifdef ENABLE_WEBGPU
+				else if (StringUtil::Strcasecmp(rname, "webgpu") == 0)
+					type = GSRendererType::WebGPU;
+#endif
 				else if (StringUtil::Strcasecmp(rname, "null") == 0)
 					type = GSRendererType::Null;
 				else

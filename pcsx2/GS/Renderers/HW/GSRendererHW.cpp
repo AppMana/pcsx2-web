@@ -7023,7 +7023,14 @@ void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, DATEOptio
 		// If we are doing depth feedback with a second RT we must use SW blending to avoid
 		// mixing dual source blending with multiple render targets.
 		(m_conf.ps.IsFeedbackLoopDepth() && !features.depth_feedback) ||
-		
+
+		// Without dual source blending, every blend that needs the shader alpha (As, masked Ad, or the mix/multipass
+		// variants which move Af into the second output) must be done in the shader.
+		(!features.dual_source_blend &&
+			(m_conf.ps.blend_c == 0 || blend_ad_alpha_masked || PABE ||
+				GSDevice::IsDualSourceBlendFactor(blend.src) || GSDevice::IsDualSourceBlendFactor(blend.dst) ||
+				(m_conf.ps.blend_c == 2 && (blend_flag & (BLEND_MIX1 | BLEND_MIX2 | BLEND_MIX3 | BLEND_HW1))))) ||
+
 		// Force SW blending with barriers.
 		GSConfig.UseDebugBlend;
 	
@@ -8958,7 +8965,7 @@ void GSRendererHW::EmulateAlphaTest(DATEOptions& date_options)
 
 	// Flags to determine if we can achieve full accuracy with less passes.
 	const bool simple_fb_only = (afail == AFAIL_FB_ONLY) && independent_z;
-	const bool simple_rgb_only = (afail == AFAIL_RGB_ONLY) && independent_z && independent_rgb;
+	const bool simple_rgb_only = (afail == AFAIL_RGB_ONLY) && independent_z && independent_rgb && features.dual_source_blend;
 	const bool simple_zb_only = (afail == AFAIL_ZB_ONLY) && independent_z;
 
 	// Determine where RT and/or depth are needed for the feedback methods.

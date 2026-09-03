@@ -1401,6 +1401,7 @@ public:
 		bool depth_feedback       : 1; ///< Depth feedback loops can be done with DS directly (otherwise need to copy to separate RT).  Implies `feedback_loops`.
 		bool aa1                  : 1; ///< Supports the GS AA1 feature.
 		bool rov                  : 1; ///< Supports rasterizer ordered views for both depth and color.
+		bool dual_source_blend    : 1; ///< Supports dual source blending (second color output as a blend factor).
 		FeatureSupport()
 		{
 			memset(this, 0, sizeof(*this));

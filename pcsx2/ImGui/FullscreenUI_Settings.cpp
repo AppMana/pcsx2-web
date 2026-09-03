@@ -2765,6 +2765,9 @@ void FullscreenUI::DrawGraphicsSettingsPage(SettingsInterface* bsi, bool show_ad
 #ifdef ENABLE_VULKAN
 		FSUI_NSTR("Vulkan"),
 #endif
+#ifdef ENABLE_WEBGPU
+		FSUI_NSTR("WebGPU"),
+#endif
 #ifdef __APPLE__
 		FSUI_NSTR("Metal"),
 #endif
@@ -2782,6 +2785,9 @@ void FullscreenUI::DrawGraphicsSettingsPage(SettingsInterface* bsi, bool show_ad
 #endif
 #ifdef ENABLE_VULKAN
 		"14", //GSRendererType::VK,
+#endif
+#ifdef ENABLE_WEBGPU
+		"18", //GSRendererType::WebGPU,
 #endif
 #ifdef __APPLE__
 		"17", //GSRendererType::Metal,
