@@ -719,7 +719,7 @@ static void PrintCommandLineHelp(const char* progname)
 	std::fprintf(stderr, "  -help: Displays this information and exits.\n");
 	std::fprintf(stderr, "  -version: Displays version information and exits.\n");
 	std::fprintf(stderr, "  -bios <dir>: Directory containing the BIOS image.\n");
-	std::fprintf(stderr, "  -renderer <sw|vulkan|null>: Sets the graphics renderer. Defaults to Auto.\n");
+	std::fprintf(stderr, "  -renderer <sw|vulkan|webgpu|null>: Sets the graphics renderer. Defaults to Auto.\n");
 	std::fprintf(stderr, "  -cpu <interpreter|recompiler>: Sets the EE/IOP/VU execution mode. Defaults to interpreter.\n");
 	std::fprintf(stderr, "  -frames <count>: Stops after this many vsyncs.\n");
 	std::fprintf(stderr, "  -input <file.p2m2>: Replays an input recording from power on.\n");

@@ -584,6 +584,16 @@ bool GSDeviceWebGPU::CreateDeviceAndSurface()
 	m_device_features.texture_compression_bc = wgpuAdapterHasFeature(m_adapter, WGPUFeatureName_TextureCompressionBC);
 	m_device_features.timestamp_query = wgpuAdapterHasFeature(m_adapter, WGPUFeatureName_TimestampQuery);
 
+	if (const char* disabled = std::getenv("PCSX2_WEBGPU_DISABLE_FEATURES"))
+	{
+		const std::string_view list(disabled);
+		m_device_features.dual_source_blending &= (list.find("dsb") == std::string_view::npos);
+		m_device_features.primitive_index &= (list.find("primid") == std::string_view::npos);
+		m_device_features.depth32float_stencil8 &= (list.find("stencil") == std::string_view::npos);
+		m_device_features.texture_formats_tier1 &= (list.find("tier1") == std::string_view::npos);
+		m_device_features.texture_compression_bc &= (list.find("bc") == std::string_view::npos);
+	}
+
 	std::vector<WGPUFeatureName> required_features;
 	if (m_device_features.depth32float_stencil8)
 		required_features.push_back(WGPUFeatureName_Depth32FloatStencil8);
