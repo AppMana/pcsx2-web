@@ -178,3 +178,124 @@ export function createRunReport(fields) {
     emu: fields.emu ?? {},
   };
 }
+
+// Pad states as the host takes them: the kit's DIGITAL1/DIGITAL2 bit layout
+// (contract.js PadState) packed into one button word, plus the twelve
+// pressure bytes in the .p2m2 order (p2m2.js) that pcsx2_web_set_pad and
+// pcsx2_web_pad_schedule_add accept.
+export const DIGITAL1 = Object.freeze({ select: 0x01, l3: 0x02, r3: 0x04, start: 0x08, up: 0x10, right: 0x20, down: 0x40, left: 0x80 });
+export const DIGITAL2 = Object.freeze({ l2: 0x01, r2: 0x02, l1: 0x04, r1: 0x08, triangle: 0x10, circle: 0x20, cross: 0x40, square: 0x80 });
+export const PRESSURE_ORDER = Object.freeze([
+  ["right", 1, DIGITAL1.right], ["left", 1, DIGITAL1.left], ["up", 1, DIGITAL1.up], ["down", 1, DIGITAL1.down],
+  ["triangle", 2, DIGITAL2.triangle], ["circle", 2, DIGITAL2.circle], ["cross", 2, DIGITAL2.cross], ["square", 2, DIGITAL2.square],
+  ["l1", 2, DIGITAL2.l1], ["r1", 2, DIGITAL2.r1], ["l2", 2, DIGITAL2.l2], ["r2", 2, DIGITAL2.r2],
+]);
+export const NEUTRAL_PAD = Object.freeze({ digital1: 0, digital2: 0, leftX: 127, leftY: 127, rightX: 127, rightY: 127 });
+
+function padByte(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(255, Math.round(number)));
+}
+
+/**
+ * Merges a partial pad state into the previous one (fields left out keep
+ * their value, the same rule as the page API's setPad and the kit's
+ * expandInputTrace) and resolves the pressure of every pressed
+ * pressure-sensitive button: the entry's value, else the previous value
+ * while the button stays pressed, else full pressure.
+ * @param {Record<string, unknown> | undefined} previous
+ * @param {Record<string, unknown>} entry
+ */
+export function mergePadState(previous, entry) {
+  const base = previous ?? { ...NEUTRAL_PAD, pressure: {} };
+  const digital1 = padByte(entry.digital1, /** @type {number} */ (base.digital1));
+  const digital2 = padByte(entry.digital2, /** @type {number} */ (base.digital2));
+  const mergedPressure = { .../** @type {Record<string, number>} */ (base.pressure ?? {}), .../** @type {Record<string, number>} */ (entry.pressure ?? {}) };
+  /** @type {Record<string, number>} */
+  const pressure = {};
+  for (const [name, group, bit] of PRESSURE_ORDER) {
+    if (((group === 1 ? digital1 : digital2) & bit) !== 0) pressure[name] = padByte(mergedPressure[name], 255);
+  }
+  return {
+    digital1,
+    digital2,
+    leftX: padByte(entry.leftX, /** @type {number} */ (base.leftX)),
+    leftY: padByte(entry.leftY, /** @type {number} */ (base.leftY)),
+    rightX: padByte(entry.rightX, /** @type {number} */ (base.rightX)),
+    rightY: padByte(entry.rightY, /** @type {number} */ (base.rightY)),
+    pressure,
+  };
+}
+
+/** digital1 in bits 0-7 and digital2 in bits 8-15, the host's `buttons` word. */
+export function packPadButtons(state) {
+  return ((Number(state.digital1) & 0xff) | ((Number(state.digital2) & 0xff) << 8)) >>> 0;
+}
+
+/** The twelve pressure bytes in .p2m2 order for a merged state (0 for released buttons). */
+export function padPressureBytes(state) {
+  const bytes = new Uint8Array(PRESSURE_ORDER.length);
+  PRESSURE_ORDER.forEach(([name], index) => { bytes[index] = padByte(state.pressure?.[name], 0); });
+  return bytes;
+}
+
+/**
+ * Turns frame-indexed input trace entries (contract.js InputTraceEntry:
+ * partial states that persist until the next entry for the port) into the
+ * full per-entry states the host schedule takes, in frame order with
+ * insertion order kept for equal frames.
+ * @param {Array<Record<string, unknown>>} entries
+ */
+export function expandPadSchedule(entries) {
+  const sorted = entries.map((entry, order) => {
+    const frame = Number(entry.frame);
+    if (!Number.isInteger(frame) || frame < 0) throw new Error(`inputTrace[${order}].frame must be a non-negative integer`);
+    const port = Number(entry.port ?? 0);
+    if (port !== 0 && port !== 1) throw new Error(`inputTrace[${order}].port must be 0 or 1`);
+    return { entry, frame, port, order };
+  }).sort((left, right) => left.frame - right.frame || left.order - right.order);
+  /** @type {Array<Record<string, unknown> | undefined>} */
+  const current = [undefined, undefined];
+  return sorted.map(({ entry, frame, port }) => {
+    const state = mergePadState(current[port], entry);
+    current[port] = state;
+    return { frame, port, ...state };
+  });
+}
+
+// WebAudio::StatsIndex (pcsx2/Host/WebAudioStream.h): u32 counters at
+// pcsx2_web_audio_stats_address(), in this order.
+export const AUDIO_STATS = Object.freeze(["state", "sampleRate", "quantum", "callbacks", "pulledFrames", "nonzeroFrames", "underruns", "idleCallbacks", "writtenFrames"]);
+export const AUDIO_STATE_NAMES = Object.freeze({ "-1": "failed", 0: "detached", 1: "starting", 2: "ready" });
+
+/**
+ * Reads the audio counters; `state` comes back signed (WebAudio::State).
+ * @param {Uint32Array} heap
+ * @param {number} address
+ */
+export function readAudioStats(heap, address) {
+  const base = address >>> 2;
+  /** @type {Record<string, number>} */
+  const stats = {};
+  AUDIO_STATS.forEach((name, index) => { stats[name] = Atomics.load(heap, base + index); });
+  stats.state |= 0;
+  return stats;
+}
+
+/**
+ * Splits the host's trace stream into the tracerunner's two files: cpu.jsonl
+ * records carry register hashes ("ee"), audio.jsonl records carry the frame
+ * count and one hash ("frames").
+ * @param {string} text
+ */
+export function splitTraceRecords(text) {
+  let cpuJsonl = "";
+  let audioJsonl = "";
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    if (line.includes('"frames":')) audioJsonl += `${line}\n`;
+    else cpuJsonl += `${line}\n`;
+  }
+  return { cpuJsonl, audioJsonl };
+}

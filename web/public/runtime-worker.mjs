@@ -6,11 +6,13 @@
 // Messages in:  boot { coreUrl, pthreadPoolSize, bios?: { name, bytes }, elf: { name, bytes }, isDump,
 //                     render, renderer, gsHost, readback, captureRgba, captureEvery, captureFrames, loops,
 //                     canvas?: OffscreenCanvas, canvasSelector, canvasWidth, canvasHeight,
-//                     settings, cpu, trace, frames, timeoutMs, pad }
-//               stop, pad { port, state }, snapshot, export-input-trace
+//                     settings, cpu, trace, frames (0 = until stop), timeoutMs (0 = none), pad,
+//                     inputTrace, audio }
+//               audio-attach { port: MessagePort, scriptUrl }, stop, pad { port, state }, snapshot,
+//               export-input-trace
 // Messages out: runtime-progress, runtime-result { report }, runtime-shutdown, runtime-fatal,
 //               input-trace
-import { INTERPRETER_SETTINGS, RENDERERS, STATUS, TtyDecoder, bytesToBase64, createRunReport, rendererId, splitSettingKey, statusName } from "./pcsx2-report.mjs";
+import { AUDIO_STATE_NAMES, INTERPRETER_SETTINGS, RENDERERS, STATUS, TtyDecoder, bytesToBase64, createRunReport, expandPadSchedule, mergePadState, packPadButtons, padPressureBytes, readAudioStats, rendererId, splitSettingKey, splitTraceRecords, statusName } from "./pcsx2-report.mjs";
 
 const scope = /** @type {DedicatedWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
@@ -22,9 +24,20 @@ let bootStartedAt = 0;
 let frameCounterAddress = 0;
 let observedFrames = 0;
 let stopRequested = false;
-let padState = { digital1: 0, digital2: 0, leftX: 128, leftY: 128, rightX: 128, rightY: 128 };
+/** @type {Record<string, unknown> | undefined} */
+let padState;
 /** @type {Array<Record<string, unknown>>} */
 const inputTrace = [];
+let padScheduled = 0;
+// Web Audio: the page's MessagePort and the module script URL the page loads
+// into its AudioWorkletGlobalScope (web/public/pcsx2-web-audio.mjs).
+/** @type {MessagePort | undefined} */
+let audioPort;
+/** @type {string | undefined} */
+let audioScriptUrl;
+let audioStatsAddress = 0;
+/** @type {Record<string, unknown>} */
+let audioReport = { requested: false };
 /** @type {unknown[]} */
 let events = [];
 let traceSupported = false;
@@ -265,20 +278,86 @@ function setSetting(settingKey, value) {
   if (result !== 0) throw new Error(`pcsx2_web_set_setting(${section}, ${key}) returned ${result}`);
 }
 
+// The host takes the twelve pressure bytes through a pointer; one scratch
+// block serves every call.
+let pressurePointer = 0;
+function writePressures(state) {
+  pressurePointer ||= module._malloc(12);
+  module.HEAPU8.set(padPressureBytes(state), pressurePointer);
+  return pressurePointer;
+}
+
+// Live pad state: merged like setPad(), applied by the host at the next vsync.
 function applyPad(port, state) {
-  padState = {
-    digital1: Number(state.digital1 ?? padState.digital1) >>> 0,
-    digital2: Number(state.digital2 ?? padState.digital2) >>> 0,
-    leftX: Math.max(0, Math.min(255, Number(state.leftX ?? padState.leftX))) >>> 0,
-    leftY: Math.max(0, Math.min(255, Number(state.leftY ?? padState.leftY))) >>> 0,
-    rightX: Math.max(0, Math.min(255, Number(state.rightX ?? padState.rightX))) >>> 0,
-    rightY: Math.max(0, Math.min(255, Number(state.rightY ?? padState.rightY))) >>> 0,
-  };
-  inputTrace.push({ frame: frameCount(), port, ...padState });
-  if (hasExport("pcsx2_web_set_pad")) {
-    module.ccall("pcsx2_web_set_pad", null, ["number", "number", "number", "number", "number", "number", "number"],
-      [port, padState.digital1, padState.digital2, padState.leftX, padState.leftY, padState.rightX, padState.rightY]);
+  const merged = mergePadState(port === 0 ? padState : undefined, state);
+  if (port === 0) padState = merged;
+  inputTrace.push({ frame: frameCount(), port, ...merged });
+  if (!hasExport("pcsx2_web_set_pad")) return;
+  const result = module._pcsx2_web_set_pad(port, packPadButtons(merged), merged.leftX, merged.leftY, merged.rightX, merged.rightY, writePressures(merged)) | 0;
+  if (result !== 0) throw new Error(`pcsx2_web_set_pad returned ${result}`);
+}
+
+// Frame-indexed entries become the host's pad schedule, applied at the vsync
+// with that frame count where a .p2m2 replay would override the pad.
+function schedulePad(entries) {
+  if (!hasExport("pcsx2_web_pad_schedule_add")) throw new Error("this build has no pad schedule exports");
+  module._pcsx2_web_pad_schedule_clear();
+  for (const state of expandPadSchedule(entries)) {
+    const result = module._pcsx2_web_pad_schedule_add(state.frame, state.port, packPadButtons(state), state.leftX, state.leftY, state.rightX, state.rightY, writePressures(state)) | 0;
+    if (result !== 0) throw new Error(`pcsx2_web_pad_schedule_add(${state.frame}) returned ${result}`);
+    padScheduled += 1;
   }
+}
+
+function padAppliedCount() {
+  return hasExport("pcsx2_web_pad_applied_count") ? module._pcsx2_web_pad_applied_count() | 0 : 0;
+}
+
+function audioStats() {
+  if (!audioStatsAddress) return undefined;
+  const stats = readAudioStats(new Uint32Array(module.HEAPU8.buffer), audioStatsAddress);
+  return { ...stats, stateName: AUDIO_STATE_NAMES[String(stats.state)] ?? `state ${stats.state}` };
+}
+
+// Starts the audio worklet on the page's AudioContext and waits for the
+// bootstrap (the page loads the module script into the worklet scope, which
+// takes a moment) so the report can say whether audio ran.
+async function attachAudio(coreUrl, timeoutMs) {
+  const startedAt = performance.now();
+  audioReport = { requested: true, attached: false };
+  if (!hasExport("pcsx2_web_audio_attach")) {
+    audioReport.detail = "this build has no audio exports";
+    return;
+  }
+  if (!audioPort) {
+    audioReport.detail = "the page sent no audio port";
+    return;
+  }
+  audioStatsAddress = module._pcsx2_web_audio_stats_address() >>> 0;
+  module.pcsx2AudioPort = audioPort;
+  module.pcsx2AudioScriptUrl = audioScriptUrl ?? coreUrl;
+  const result = module._pcsx2_web_audio_attach(48000) | 0;
+  if (result !== 0) {
+    audioReport.detail = `pcsx2_web_audio_attach returned ${result}`;
+    return;
+  }
+  const deadline = startedAt + timeoutMs;
+  for (;;) {
+    pump();
+    const state = module._pcsx2_web_audio_status() | 0;
+    if (state === 2 || state === -1) {
+      audioReport.attached = state === 2;
+      audioReport.detail = state === 2 ? "worklet ready" : "worklet failed";
+      break;
+    }
+    if (fatalDetail) throw new Error(fatalDetail);
+    if (performance.now() >= deadline) {
+      audioReport.detail = `worklet not ready after ${timeoutMs} ms`;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  audioReport.attachMs = performance.now() - startedAt;
 }
 
 /** Waits until `predicate(status)` holds, pumping the host queue; false on timeout. */
@@ -321,10 +400,12 @@ async function stopVm(timeoutMs = 10_000) {
 
 async function boot(request) {
   bootStartedAt = performance.now();
-  const frames = Number.isInteger(request.frames) ? Math.max(1, request.frames) : 1;
-  const timeoutMs = Number.isFinite(request.timeoutMs) ? Math.max(1_000, request.timeoutMs) : 120_000;
+  // frames 0 runs until stop() (an interactive session); timeoutMs 0 removes the deadline.
+  const unlimited = request.frames === 0;
+  const frames = unlimited ? Infinity : Number.isInteger(request.frames) ? Math.max(1, request.frames) : 1;
+  const timeoutMs = request.timeoutMs === 0 ? Infinity : Number.isFinite(request.timeoutMs) ? Math.max(1_000, request.timeoutMs) : 120_000;
   const deadline = bootStartedAt + timeoutMs;
-  const traceOptions = { cpu: false, ramEvery: 0, tty: true, ...(request.trace ?? {}) };
+  const traceOptions = { cpu: false, ramEvery: 0, tty: true, audio: false, ...(request.trace ?? {}) };
   let bootResult;
   let moduleCreateMs = 0;
   let initResult;
@@ -420,17 +501,24 @@ async function boot(request) {
 
     stage = "trace";
     traceSupported = hasExport("pcsx2_web_trace_enable") && hasExport("pcsx2_web_trace_read");
-    if (traceSupported && (traceOptions.cpu || traceOptions.ramEvery > 0)) {
-      const result = module.ccall("pcsx2_web_trace_enable", "number", ["number", "number"], [traceOptions.cpu ? 1 : 0, traceOptions.ramEvery | 0]);
+    if (traceSupported && (traceOptions.cpu || traceOptions.ramEvery > 0 || traceOptions.audio)) {
+      const mask = (traceOptions.cpu ? 1 : 0) | (traceOptions.audio ? 2 : 0);
+      const result = module.ccall("pcsx2_web_trace_enable", "number", ["number", "number"], [mask, traceOptions.ramEvery | 0]);
       if (result !== 0) throw new Error(`pcsx2_web_trace_enable returned ${result}`);
     }
     frameCounterAddress = module._pcsx2_web_frame_count_address() >>> 0;
-    if (hasExport("pcsx2_web_set_frame_limit") && !isDump) {
+    if (hasExport("pcsx2_web_set_frame_limit") && !isDump && !unlimited) {
       const result = module._pcsx2_web_set_frame_limit(frames) | 0;
       if (result !== 0) throw new Error(`pcsx2_web_set_frame_limit returned ${result}`);
       frameLimitArmed = true;
     }
+
+    stage = "pad";
+    if (Array.isArray(request.inputTrace) && request.inputTrace.length) schedulePad(request.inputTrace);
     if (request.pad) applyPad(0, request.pad);
+
+    stage = "audio";
+    if (request.audio) await attachAudio(coreUrl, Math.min(30_000, deadline - performance.now()));
 
     stage = "boot";
     bootResult = module.ccall("pcsx2_web_boot", "number", ["string", "string"], [elfPath, isDump ? "" : elfPath]) | 0;
@@ -445,7 +533,7 @@ async function boot(request) {
     let seen = frameCount();
     let lastProgress = performance.now();
     const progressEvery = Number.isFinite(request.progressIntervalMs) ? request.progressIntervalMs : 1000;
-    while (observedFrames < frames && !stopRequested) {
+    while ((unlimited || observedFrames < frames) && !stopRequested) {
       if (fatalDetail) throw new Error(fatalDetail);
       const now = performance.now();
       if (now >= deadline) throw new Error(`frame ${observedFrames}/${frames} did not arrive within ${timeoutMs} ms`);
@@ -483,7 +571,7 @@ async function boot(request) {
     if (selfStopping && !stopRequested && status() !== STATUS.Idle) {
       await waitForStatus((code) => code === STATUS.Idle || code === STATUS.BootFailed || code === STATUS.CPUThreadFailed, Math.max(1_000, deadline - performance.now()));
     }
-    ok = observedFrames >= frames || ((frameLimitArmed || selfStopping) && status() === STATUS.Idle);
+    ok = observedFrames >= frames || ((frameLimitArmed || selfStopping) && status() === STATUS.Idle) || (unlimited && stopRequested);
     if (!ok) failure = `stopped at frame ${observedFrames}/${frames}`;
   } catch (error) {
     failure = `${stage}: ${error instanceof Error ? error.message : String(error)}`;
@@ -501,7 +589,9 @@ async function boot(request) {
     shutdown = { stoppedCleanly: false, detail: detail(error) };
   }
   const ttyLines = tty.finish();
-  const cpuJsonl = traceSupported ? traceText(frames) : undefined;
+  const traceRecords = traceSupported ? splitTraceRecords(traceText(Number.isFinite(frames) ? frames : undefined)) : undefined;
+  const cpuJsonl = traceRecords ? traceRecords.cpuJsonl : undefined;
+  const audioJsonl = traceRecords && traceOptions.audio ? traceRecords.audioJsonl : undefined;
 
   // Captured frames attach to their frame record (index = host frame counter);
   // frames read back after the run loop ended get records of their own.
@@ -547,12 +637,14 @@ async function boot(request) {
       statusName: statusName(module ? status() : STATUS.Uninitialized),
       fatal: fatalDetail,
       renderer,
-      requestedFrames: frames,
+      requestedFrames: Number.isFinite(frames) ? frames : 0,
       observedFrames,
-      trace: { supported: traceSupported, cpu: traceOptions.cpu, ramEvery: traceOptions.ramEvery, tty: traceOptions.tty },
+      trace: { supported: traceSupported, cpu: traceOptions.cpu, ramEvery: traceOptions.ramEvery, tty: traceOptions.tty, audio: traceOptions.audio },
       cpuJsonl,
+      audioJsonl,
+      audio: { ...audioReport, worklet: module ? audioStats() : undefined },
       logs: logs.slice(-200),
-      inputTrace: { schema: 1, entries: inputTrace, applied: inputTrace.length },
+      inputTrace: { schema: 1, entries: inputTrace, applied: module ? padAppliedCount() : 0, scheduled: padScheduled },
     },
   });
   scope.postMessage({ type: "runtime-result", report });
@@ -574,15 +666,23 @@ scope.addEventListener("message", async (event) => {
       scope.postMessage({ type: "runtime-shutdown", ...shutdown });
       return;
     }
+    case "audio-attach":
+      audioPort = message.port;
+      audioScriptUrl = message.scriptUrl;
+      return;
     case "pad":
-      if (module) applyPad(message.port | 0, message.state ?? {});
-      else inputTrace.push({ frame: 0, port: message.port | 0, ...(message.state ?? {}) });
+      try {
+        if (module) applyPad(message.port | 0, message.state ?? {});
+        else inputTrace.push({ frame: 0, port: message.port | 0, ...(message.state ?? {}) });
+      } catch (error) {
+        pushEvent({ type: "pad-rejected", detail: detail(error) });
+      }
       return;
     case "snapshot":
       if (module) progress("snapshot");
       return;
     case "export-input-trace":
-      scope.postMessage({ type: "input-trace", schema: 1, entries: inputTrace, flipCounter: module ? frameCount() : 0, applied: inputTrace.length });
+      scope.postMessage({ type: "input-trace", schema: 1, entries: inputTrace, flipCounter: module ? frameCount() : 0, applied: module ? padAppliedCount() : 0, scheduled: padScheduled });
       return;
     default:
       return;

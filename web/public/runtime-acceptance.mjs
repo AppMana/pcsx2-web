@@ -4,6 +4,7 @@
 // page fetches the BIOS from origin-private storage and the ELF from its
 // fixture URL, hands both to the worker, and relays the report.
 import { isGsDumpTarget } from "./pcsx2-report.mjs";
+import { createAudioHost } from "./pcsx2-web-audio.mjs";
 
 const BIOS_DIR = "pcsx2/bios";
 const MOUNT_ROOT = "/opfs";
@@ -20,6 +21,10 @@ let currentFrame = 0;
 let currentPad = { digital1: 0, digital2: 0, leftX: 128, leftY: 128, rightX: 128, rightY: 128 };
 /** @type {Array<Record<string, unknown>>} */
 let recordedInputs = [];
+// One AudioContext per page: creating it needs a user gesture (or Chrome's
+// --autoplay-policy=no-user-gesture-required), and it survives runs.
+/** @type {AudioContext | undefined} */
+let audioContext;
 
 const resultElement = document.querySelector("#result");
 const statusElement = document.querySelector("#status");
@@ -92,6 +97,16 @@ function takeCanvas(width, height) {
   return canvas.transferControlToOffscreen();
 }
 
+// The SPU2 mixes at 48 kHz; the context is created at that rate so the
+// worklet pulls frames one to one and the browser resamples to the device.
+export async function ensureAudioContext() {
+  if (!audioContext) audioContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+  if (audioContext.state !== "running") {
+    try { await audioContext.resume(); } catch {}
+  }
+  return audioContext;
+}
+
 // target: the URL of an ELF or a GS dump (.gs, .gs.xz, .gs.zst) relative to
 // this page, for example "tests/fixtures/hello_tty/hello_tty.elf" (served
 // from the repository's fixture tree). Dumps replay through GSDumpReplayer
@@ -101,14 +116,19 @@ function takeCanvas(width, height) {
 // captureRgba, captureEvery, captureFrames (oracle frame numbers to read
 // back), loops (dump replays), bios (storage path of the
 // BIOS file), settings (Section/Key -> value), cpu, trace { cpu, ramEvery,
-// tty }, timeoutMs, pthreadPoolSize, coreUrl, pad, canvasWidth, canvasHeight.
+// tty, audio }, timeoutMs (0: no deadline), pthreadPoolSize, coreUrl, pad,
+// inputTrace (frame-indexed pad states applied through the host's schedule),
+// audio (true: play the SPU2 output through an audio worklet on this page's
+// AudioContext), canvasWidth, canvasHeight. frames 0 runs until stop().
 function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
   if (active) return active;
   activeWorker?.terminate();
   currentFrame = 0;
   recordedInputs = [];
   active = (async () => {
-    const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
+    const timeoutMs = options.timeoutMs === 0 ? Infinity : Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
+    const coreUrl = new URL(options.coreUrl ?? "./core/pcsx2-web.mjs", location.href).href;
+    const audioHost = options.audio ? createAudioHost({ audioContext: await ensureAudioContext() }) : undefined;
     const isDump = isGsDumpTarget(target);
     showStatus(`loading ${target}`);
     const biosPath = options.bios ? storageRelative(options.bios) : isDump ? undefined : await defaultBiosPath();
@@ -120,12 +140,13 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
     const canvas = wantsCanvas ? takeCanvas(canvasWidth, canvasHeight) : undefined;
     const worker = new Worker("./runtime-worker.mjs", { type: "module" });
     activeWorker = worker;
+    if (audioHost) worker.postMessage({ type: "audio-attach", port: audioHost.port, scriptUrl: coreUrl }, [audioHost.port]);
     const events = [];
     const report = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeout = Number.isFinite(timeoutMs) ? setTimeout(() => {
         worker.terminate();
         reject(new Error(`PCSX2 runtime timed out after ${timeoutMs + 15_000} ms; events=${JSON.stringify(events.slice(-20))}`));
-      }, timeoutMs + 15_000);
+      }, timeoutMs + 15_000) : undefined;
       worker.addEventListener("message", (event) => {
         const message = event.data;
         if (message?.type === "runtime-progress") {
@@ -155,7 +176,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         type: "boot",
         target,
         isDump,
-        coreUrl: options.coreUrl,
+        coreUrl,
         pthreadPoolSize: options.pthreadPoolSize,
         bios,
         elf,
@@ -175,15 +196,19 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         cpu: options.cpu ?? "interpreter",
         trace: options.trace,
         frames: options.frames,
-        timeoutMs,
+        timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : 0,
         progressIntervalMs: options.progressIntervalMs,
         pad: options.pad ?? currentPad,
+        inputTrace: options.inputTrace,
+        audio: Boolean(options.audio),
       }, transfer);
     }).finally(() => {
       if (activeWorker === worker) activeWorker = undefined;
       worker.terminate();
+      audioHost?.close();
     });
     report.emu.recordedInputs = recordedInputs;
+    if (audioHost) report.emu.audio = { ...(report.emu.audio ?? {}), page: audioHost.stats() };
     if (resultElement) resultElement.textContent = JSON.stringify(report, null, 2);
     showStatus(`${report.ok ? "ok" : "failed"} · ${report.detail}`);
     return report;

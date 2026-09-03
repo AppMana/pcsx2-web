@@ -66,6 +66,7 @@ function render(report: CapabilityReport): void {
       <p class="lede">Capability report for this browser. The runtime, storage and unit test pages are linked below.</p>
       <nav>
         <a href="./runtime.html">runtime.html</a>
+        <a href="./play.html">play.html</a>
         <a href="./storage.html">storage.html</a>
         <a href="./units.html">units.html</a>
       </nav>
