@@ -1,29 +1,29 @@
 target = "hello_tty.elf"
-frames = 120
+frames = 600
 bios = true
 renderer = ["sw", "webgpu"]
 cpu = "interpreter"
 input = ""
 known_failure = false
-filter = "^[A-Z][A-Z0-9_]*(=.*)?$"
 
 [trace]
 tty = true
 cpu = true
-ram_every = 60
+ram_every = 100
 
 [compare.tty]
 mode = "exact"
+line_filter = "^[A-Z][A-Z0-9_]*(=.*)?$"
 
 [compare.cpu]
 mode = "exact"
 
 [compare.frames]
 mode = "md5"
-trigger = [60, 120]
+trigger = [500, 600]
 
 [compare.frames.webgpu]
 mode = "rmse"
 max_rmse = 1.0
 min_close_pixels = 0.99
-trigger = [60, 120]
+trigger = [500, 600]
