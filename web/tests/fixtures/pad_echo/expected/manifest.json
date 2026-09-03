@@ -9,7 +9,7 @@
   "input": "/home/administrator/Documents/pcsx2-web-io/web/tests/fixtures/pad_echo/input.p2m2",
   "image": {"path": "/home/administrator/Documents/pcsx2-web-io/web/tests/fixtures/pad_echo/pad_echo.elf", "elf": true, "xxh3": "991a2c802726c360"},
   "bios": "/home/administrator/.config/PCSX2/bios",
-  "pcsx2": {"rev": "v2.9.12-54-g460ed41e1", "hash": "460ed41e1bd6155076b6a918643dfc2202269194"},
+  "pcsx2": {"rev": "v2.9.12-69-gbedba8674", "hash": "bedba8674c714dd56b5fe007a355f5a59956d33a"},
   "adapter": "NVIDIA RTX A5000",
   "driver": "Driver 610.228.256\nVulkan 1.4.341\nConformance Version 1.4.3.3\n610.57.04\nNVIDIA\nNVIDIA RTX A5000",
   "settings": {
