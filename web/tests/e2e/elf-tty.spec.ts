@@ -16,7 +16,8 @@ import { compareCpu, compareTty, discoverFixtures, summarizeRun, type CpuVerdict
 
 const biosPath = process.env.PCSX2_BIOS;
 const profileDir = process.env.PCSX2_CHROME_PROFILE ?? path.join(os.homedir(), ".cache", "pcsx2-web-playwright-profile");
-const fixtures = discoverFixtures().filter((fixture) => fixture.expectedTtyPath);
+// Disc image fixtures boot from origin-private storage in disc-boot.spec.ts.
+const fixtures = discoverFixtures().filter((fixture) => fixture.kind === "elf" && fixture.expectedTtyPath);
 const RUN_TIMEOUT_MS = Number(process.env.PCSX2_RUN_TIMEOUT_MS ?? 240_000);
 
 const test = base.extend<{}, { profile: BrowserContext }>({

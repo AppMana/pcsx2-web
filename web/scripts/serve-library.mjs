@@ -1,6 +1,7 @@
-// Same-origin library for storage imports: every fixture ELF under
-// tests/fixtures/<name>/, served by the kit's library server (Range, HEAD,
-// ETag, index.json with SHA-256). The preview server proxies /library/ here.
+// Same-origin library for storage imports: every fixture ELF and disc image
+// (ISO, CHD) under tests/fixtures/<name>/, served by the kit's library server
+// (Range, HEAD, ETag, index.json with SHA-256). The preview server proxies
+// /library/ here.
 //
 //   node scripts/serve-library.mjs [--port 4195] [--host 0.0.0.0] [--dir <fixtures dir>]
 import { readdir } from "node:fs/promises";
@@ -27,7 +28,7 @@ const files = [];
 for (const entry of (await readdir(fixturesDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
   if (!entry.isDirectory()) continue;
   for (const name of (await readdir(path.join(fixturesDir, entry.name))).sort()) {
-    if (name.endsWith(".elf")) files.push(path.join(fixturesDir, entry.name, name));
+    if (/\.(elf|iso|chd)$/.test(name)) files.push(path.join(fixturesDir, entry.name, name));
   }
 }
 if (!files.length) throw new Error(`no fixture ELFs under ${fixturesDir}`);

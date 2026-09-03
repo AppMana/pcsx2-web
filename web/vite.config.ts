@@ -20,6 +20,8 @@ const libraryProxy = {
 
 const FIXTURE_TYPES: Record<string, string> = {
   ".elf": "application/octet-stream",
+  ".iso": "application/octet-stream",
+  ".chd": "application/octet-stream",
   ".toml": "text/plain; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
