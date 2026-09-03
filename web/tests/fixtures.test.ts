@@ -30,7 +30,7 @@ describe("fixture test.toml", () => {
     expect(config.biosRequired).toBe(true);
     expect(config.trace).toEqual({ tty: true, cpu: true, ramEvery: 0 });
     expect(config.ttyFilter).toBeUndefined();
-    expect(() => parseFixtureToml('target = "x.elf"\nframes = 2\n[compare.tty]\nline_filter = "("\n')).toThrow(/line_filter/);
+    expect(() => parseFixtureToml('target = "x.elf"\nframes = 2\n[compare.tty]\nmode = "exact"\nline_filter = "("\n')).toThrow(/line_filter/);
     expect(() => parseFixtureToml('frames = 2\n')).toThrow(/target/);
   });
 
