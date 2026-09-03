@@ -36,6 +36,41 @@ else()
 	)
 endif()
 
+# Units whose float results are recorded by the trace hashes: the EE FPU and VU interpreters,
+# the counters and the SPU2 output path. They must compute exactly what the source expresses
+# (rounded multiply, then rounded add) under the guest control register, on every host.
+set(pcsx2TraceExactSources
+	COP2.cpp
+	Counters.cpp
+	FPU.cpp
+	Interpreter.cpp
+	R5900OpcodeImpl.cpp
+	SPU2/spu2.cpp
+	TraceHash.cpp
+	VU0.cpp
+	VU0micro.cpp
+	VU0microInterp.cpp
+	VU1micro.cpp
+	VU1microInterp.cpp
+	VUflags.cpp
+	VUmicro.cpp
+	VUmicroMem.cpp
+	VUops.cpp
+)
+if(MSVC)
+	set(pcsx2TraceExactOptions /fp:strict)
+else()
+	set(pcsx2TraceExactOptions -ffp-contract=off)
+	if(ARCH_X86)
+		list(APPEND pcsx2TraceExactOptions -mno-fma -mno-fma4)
+	endif()
+endif()
+# The precompiled header carries the target's feature set, so these units compile without it.
+set_source_files_properties(${pcsx2TraceExactSources} PROPERTIES
+	COMPILE_OPTIONS "${pcsx2TraceExactOptions}"
+	SKIP_PRECOMPILE_HEADERS ON
+)
+
 if(USE_LINKED_FFMPEG)
 	target_compile_definitions(PCSX2_FLAGS INTERFACE USE_LINKED_FFMPEG)
 	target_link_libraries(PCSX2_FLAGS INTERFACE FFMPEG::avcodec FFMPEG::avformat FFMPEG::avutil FFMPEG::swscale FFMPEG::swresample)
