@@ -18,7 +18,7 @@ LOCAL_IMAGE="pcsx2-web-fixtures:${IMAGE_DIGEST#sha256:}"
 
 WEB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_DIR="${WEB_DIR}/tests/fixtures"
-ALL_FIXTURES=(hello_tty gs_sprite gs_blend vu1_cube)
+ALL_FIXTURES=(hello_tty gs_sprite gs_blend vu1_cube pad_echo)
 
 if [ "$#" -gt 0 ]; then
 	FIXTURES=("$@")

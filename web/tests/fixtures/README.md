@@ -12,6 +12,7 @@ that the native oracle fills in with recorded outputs.
 | `gs_sprite` | flat sprites, gouraud triangles, alpha blending on a 640x448 interlaced frame buffer | 240 |
 | `gs_blend` | GS alpha blending equations, FIX values, a 64x64 RGBA texture upload, the Z test | 240 |
 | `vu1_cube` | VU1 microprogram upload, VIF unpack and MSCAL, XGKICK, a rotating gouraud cube | 240 |
+| `pad_echo` | DualShock 2 input through SIO2MAN/PADMAN replayed from `input.p2m2`, SPU2 output through audsrv | 400 |
 
 ## Building
 
@@ -66,6 +67,7 @@ close pixel fraction threshold.
 
 ## Determinism rules
 
-No fixture reads a timer, the pad, or anything random. Animation is a pure
-function of the frame counter, and every floating point value that reaches
-the console is printed as its raw bit pattern.
+No fixture reads a timer or anything random. Animation is a pure function of
+the frame counter, and every floating point value that reaches the console is
+printed as its raw bit pattern. `pad_echo` reads the pad, whose state comes
+from the fixture's own input recording on both sides of the comparison.

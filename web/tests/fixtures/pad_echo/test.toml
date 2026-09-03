@@ -1,0 +1,20 @@
+target = "pad_echo.elf"
+frames = 400
+bios = true
+renderer = ["sw"]
+cpu = "interpreter"
+input = "input.p2m2"
+known_failure = false
+
+[trace]
+tty = true
+cpu = true
+ram_every = 100
+audio = true
+
+[compare.tty]
+mode = "exact"
+line_filter = "^[A-Z][A-Z0-9_]*(=.*)?$"
+
+[compare.cpu]
+mode = "exact"
