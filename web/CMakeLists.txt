@@ -2,6 +2,7 @@
 
 set(PCSX2_WEB_INITIAL_MEMORY "805306368" CACHE STRING
 	"Initial Wasm linear-memory size for the browser runtime")
+option(PCSX2_WEB_PROFILE "Keep function names in the wasm modules so browser stack traces are symbolised" OFF)
 
 add_executable(pcsx2_web_runtime host/pcsx2_web_main.cpp)
 target_link_libraries(pcsx2_web_runtime PRIVATE PCSX2_FLAGS PCSX2)
@@ -32,6 +33,9 @@ target_link_options(pcsx2_web_runtime PRIVATE
 	"-sASSERTIONS=1"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/fonts@/pcsx2/resources/fonts"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/GameIndex.yaml@/pcsx2/resources/GameIndex.yaml")
+if(PCSX2_WEB_PROFILE)
+	target_link_options(pcsx2_web_runtime PRIVATE --profiling-funcs)
+endif()
 
 # Unit tests: the low-dependency common tests plus the core patch and swizzle tests,
 # reported as JSON on stdout for the browser lane.
@@ -76,3 +80,6 @@ target_link_options(pcsx2_web_unit_tests PRIVATE
 	"-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
 	"-sWASM_BIGINT=1"
 	"-sASSERTIONS=1")
+if(PCSX2_WEB_PROFILE)
+	target_link_options(pcsx2_web_unit_tests PRIVATE --profiling-funcs)
+endif()

@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 emsdk_root="${PCSX2_WEB_EMSDK:-${XDG_CACHE_HOME:-${HOME}/.cache}/emsdk-6.0.8}"
 build_jobs="${PCSX2_WEB_JOBS:-4}"
+# PCSX2_WEB_PROFILE=1 keeps function names in the wasm so browser stack traces are readable.
+profile="${PCSX2_WEB_PROFILE:-0}"
 build_dir="${repo_root}/build-pcsx2-web"
 stage_dir="${repo_root}/web/public/core"
 
@@ -17,6 +19,7 @@ fi
 emcmake cmake -S "${repo_root}" -B "${build_dir}" \
   -DPCSX2_WEB=ON \
   -DCMAKE_BUILD_TYPE=Release \
+  -DPCSX2_WEB_PROFILE="$([[ "${profile}" == "1" ]] && echo ON || echo OFF)" \
   -G Ninja
 cmake --build "${build_dir}" --target pcsx2_web_runtime pcsx2_web_unit_tests --parallel "${build_jobs}"
 mkdir -p "${stage_dir}"
