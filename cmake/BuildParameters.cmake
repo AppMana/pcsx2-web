@@ -23,6 +23,16 @@ if(NOT APPLE)
 	option(USE_OPENGL "Enable OpenGL GS renderer" ON)
 endif()
 option(USE_VULKAN "Enable Vulkan GS renderer" ON)
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+	option(USE_WEBGPU "Enable WebGPU GS renderer" ON)
+else()
+	option(USE_WEBGPU "Enable WebGPU GS renderer" OFF)
+endif()
+if(USE_WEBGPU AND NOT EMSCRIPTEN)
+	option(USE_WEBGPU_NATIVE "Link the WebGPU GS renderer against a native Dawn (find_package(Dawn))" ON)
+else()
+	option(USE_WEBGPU_NATIVE "Link the WebGPU GS renderer against a native Dawn (find_package(Dawn))" OFF)
+endif()
 
 #-------------------------------------------------------------------------------
 # Path and lib option
@@ -229,6 +239,10 @@ endif()
 
 if(USE_VULKAN)
 	list(APPEND PCSX2_DEFS ENABLE_VULKAN)
+endif()
+
+if(USE_WEBGPU)
+	list(APPEND PCSX2_DEFS ENABLE_WEBGPU)
 endif()
 
 if(X11_API)

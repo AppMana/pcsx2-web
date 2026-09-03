@@ -31,6 +31,17 @@ if(USE_VULKAN)
 	find_package(Shaderc REQUIRED)
 endif()
 
+if(USE_WEBGPU_NATIVE)
+	find_package(Threads REQUIRED)
+	find_package(Dawn CONFIG)
+	if(NOT Dawn_FOUND)
+		message(WARNING "USE_WEBGPU_NATIVE is set but Dawn was not found, disabling the WebGPU renderer.")
+		set(USE_WEBGPU OFF CACHE BOOL "Enable WebGPU GS renderer" FORCE)
+		set(USE_WEBGPU_NATIVE OFF CACHE BOOL "Link the WebGPU GS renderer against a native Dawn (find_package(Dawn))" FORCE)
+		list(REMOVE_ITEM PCSX2_DEFS ENABLE_WEBGPU)
+	endif()
+endif()
+
 # Platform-specific dependencies.
 if (WIN32)
 	add_subdirectory(3rdparty/D3D12MemAlloc EXCLUDE_FROM_ALL)

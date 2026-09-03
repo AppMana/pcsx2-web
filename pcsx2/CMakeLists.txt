@@ -652,6 +652,24 @@ if(USE_VULKAN)
 	target_include_directories(PCSX2_FLAGS INTERFACE ${SHADERC_INCLUDE_DIR})
 endif()
 
+if(USE_WEBGPU)
+	list(APPEND pcsx2GSSources
+		GS/Renderers/WebGPU/GSDeviceWebGPU.cpp
+		GS/Renderers/WebGPU/GSTextureWebGPU.cpp
+		GS/Renderers/WebGPU/WebGPUStreamBuffer.cpp
+		GS/Renderers/WebGPU/WGSLPreprocessor.cpp
+	)
+	list(APPEND pcsx2GSHeaders
+		GS/Renderers/WebGPU/GSDeviceWebGPU.h
+		GS/Renderers/WebGPU/GSTextureWebGPU.h
+		GS/Renderers/WebGPU/WebGPUStreamBuffer.h
+		GS/Renderers/WebGPU/WGSLPreprocessor.h
+	)
+	if(USE_WEBGPU_NATIVE)
+		target_link_libraries(PCSX2_FLAGS INTERFACE dawn::webgpu_dawn)
+	endif()
+endif()
+
 set(pcsx2GSMetalShaders
 	GS/Renderers/Metal/cas.metal
 	GS/Renderers/Metal/convert.metal
