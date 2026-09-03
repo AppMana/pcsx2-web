@@ -109,6 +109,7 @@ Threading::Thread::Thread() = default;
 Threading::Thread::Thread(Thread&& thread)
 	: ThreadHandle(thread)
 	, m_stack_size(thread.m_stack_size)
+	, m_transferred_canvases(std::move(thread.m_transferred_canvases))
 {
 	thread.m_stack_size = 0;
 }
@@ -131,6 +132,12 @@ void Threading::Thread::SetStackSize(u32 size)
 	m_stack_size = size;
 }
 
+void Threading::Thread::SetTransferredCanvases(std::string canvases)
+{
+	pxAssertRel(!m_native_handle, "Can't change the transferred canvases on a started thread");
+	m_transferred_canvases = std::move(canvases);
+}
+
 void* Threading::Thread::ThreadProc(void* param)
 {
 	std::unique_ptr<EntryPoint> entry(static_cast<EntryPoint*>(param));
@@ -147,11 +154,14 @@ bool Threading::Thread::Start(EntryPoint func)
 	pthread_attr_t attrs;
 	bool has_attributes = false;
 
-	if (m_stack_size != 0)
+	if (m_stack_size != 0 || !m_transferred_canvases.empty())
 	{
 		has_attributes = true;
 		pthread_attr_init(&attrs);
-		pthread_attr_setstacksize(&attrs, m_stack_size);
+		if (m_stack_size != 0)
+			pthread_attr_setstacksize(&attrs, m_stack_size);
+		if (!m_transferred_canvases.empty())
+			emscripten_pthread_attr_settransferredcanvases(&attrs, m_transferred_canvases.c_str());
 	}
 
 	pthread_t handle;
@@ -186,6 +196,7 @@ Threading::ThreadHandle& Threading::Thread::operator=(Thread&& thread)
 {
 	ThreadHandle::operator=(thread);
 	m_stack_size = thread.m_stack_size;
+	m_transferred_canvases = std::move(thread.m_transferred_canvases);
 	thread.m_stack_size = 0;
 	return *this;
 }
