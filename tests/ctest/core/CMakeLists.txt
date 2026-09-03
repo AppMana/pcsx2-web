@@ -15,6 +15,14 @@ target_link_libraries(core_test PUBLIC
 	common
 )
 
+if(USE_WEBGPU)
+	target_sources(core_test PRIVATE
+		GS/webgpu_preprocessor_tests.cpp
+		GS/webgpu_shader_compile_tests.cpp
+	)
+	target_compile_definitions(core_test PRIVATE "WEBGPU_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/bin/resources/shaders/webgpu\"")
+endif()
+
 if(DISABLE_ADVANCE_SIMD AND ARCH_X86)
 	if(WIN32)
 		set(compile_options_avx2 /arch:AVX2)

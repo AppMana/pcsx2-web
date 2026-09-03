@@ -668,6 +668,9 @@ void MainWindow::createRendererSwitchMenu()
 #ifdef ENABLE_VULKAN
 		GSRendererType::VK,
 #endif
+#ifdef ENABLE_WEBGPU
+		GSRendererType::WebGPU,
+#endif
 		GSRendererType::SW,
 		GSRendererType::Null,
 	};

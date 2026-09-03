@@ -1,0 +1,9 @@
+node_modules/
+.yarn/
+dist/
+public/core/
+public/coi-serviceworker.js
+public/kit/
+test-results/
+playwright-report/
+tests/fixtures/*/expected/*.self.*

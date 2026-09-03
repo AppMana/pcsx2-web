@@ -278,6 +278,7 @@ enum class GSRendererType : s8
 	VK = 14,
 	Metal = 17,
 	DX12 = 15,
+	WebGPU = 18,
 };
 
 enum class GSVSyncMode : u8
