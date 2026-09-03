@@ -116,7 +116,10 @@ function drainTrace() {
   return total;
 }
 
-function traceText() {
+// The VM keeps running until the stop request lands on the CPU thread, so a
+// few vsyncs past the requested count can be traced; the oracle stops at its
+// frame limit, so only records below `frames` are kept.
+function traceText(frames) {
   if (!traceChunks.length) return "";
   const size = traceChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const joined = new Uint8Array(size);
@@ -125,7 +128,13 @@ function traceText() {
     joined.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(joined);
+  const text = new TextDecoder().decode(joined);
+  if (!Number.isInteger(frames)) return text;
+  return text.split("\n").filter((line) => {
+    if (!line) return false;
+    const match = /^\{"frame":(\d+)/.exec(line);
+    return !match || Number(match[1]) < frames;
+  }).map((line) => `${line}\n`).join("");
 }
 
 function frameCount() {
@@ -348,7 +357,7 @@ async function boot(request) {
     shutdown = { stoppedCleanly: false, detail: detail(error) };
   }
   const ttyLines = tty.finish();
-  const cpuJsonl = traceSupported ? traceText() : undefined;
+  const cpuJsonl = traceSupported ? traceText(frames) : undefined;
 
   const report = createRunReport({
     ok: ok && Boolean(shutdown.stoppedCleanly),
