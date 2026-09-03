@@ -1,0 +1,10 @@
+WebGPU: Using adapter 'NVIDIA RTX A5000' (NVIDIA: 610.57.04 610.57.4.0), backend 6
+@HWSTAT@ Draw Calls: 21 (avg 3)
+@HWSTAT@ Render Passes: 20 (avg 3)
+@HWSTAT@ Barriers: 0 (avg 0)
+@HWSTAT@ Copies: 13 (avg 2)
+@HWSTAT@ Uploads: 1 (avg 1)
+@HWSTAT@ Readbacks: 3 (avg 1)
+@HWSTAT@ Copies (ROV): 0 (avg 0)
+@HWSTAT@ Draws Calls (ROV): 0 (avg 0)
+@HWSTAT@ Barriers (ROV): 0 (avg 0)
