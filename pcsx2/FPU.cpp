@@ -194,8 +194,6 @@ static __fi float fpuDiv(float a, float b) { return SoftFloat::Div(a, b, FPContr
 static __fi float fpuSqrt(float a) { return SoftFloat::Sqrt(a, FPControlRegister::GetCurrent()); }
 static __fi float fpuDivBySqrt(float a, float b) { return SoftFloat::DivBySqrtDouble(a, b, FPControlRegister::GetCurrent()); }
 static __fi float fpuFromInt(s32 v) { return SoftFloat::FromInt(v, FPControlRegister::GetCurrent()); }
-// The native build contracts ACC += a * b into an FMA (-ffp-contract=fast), so it rounds once.
-static __fi float fpuFma(float a, float b, float c) { return SoftFloat::Fma(a, b, c, FPControlRegister::GetCurrent()); }
 #else
 static __fi float fpuAdd(float a, float b) { return a + b; }
 static __fi float fpuSub(float a, float b) { return a - b; }
@@ -301,11 +299,7 @@ void MADD_S() {
 }
 
 void MADDA_S() {
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	_FAValf_ = fpuFma( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ), _FAValf_ );
-#else
-	_FAValf_ += fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
-#endif
+	_FAValf_ = fpuAdd( _FAValf_, fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) ) );
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }
@@ -338,11 +332,7 @@ void MSUB_S() {
 }
 
 void MSUBA_S() {
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	_FAValf_ = fpuFma( -fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ), _FAValf_ );
-#else
-	_FAValf_ -= fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
-#endif
+	_FAValf_ = fpuSub( _FAValf_, fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) ) );
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }

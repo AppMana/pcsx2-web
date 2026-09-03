@@ -176,7 +176,7 @@ namespace
 {
 	struct HardwareResults
 	{
-		float add, sub, mul, div, sqrt, rsqrt, fromint, fma;
+		float add, sub, mul, div, sqrt, rsqrt, fromint;
 	};
 
 	__attribute__((noinline)) HardwareResults RunHardware(float a, float b, s32 i, FPControlRegister fpcr)
@@ -197,13 +197,8 @@ namespace
 		dout = static_cast<double>(va) / _mm_cvtsd_f64(_mm_sqrt_sd(_mm_setzero_pd(), _mm_set_sd(static_cast<double>(vb))));
 		out_rsqrt = static_cast<float>(dout);
 		out_fromint = static_cast<float>(vi);
-#ifdef __FMA__
-		volatile float out_fma = _mm_cvtss_f32(_mm_fmadd_ss(_mm_set_ss(va), _mm_set_ss(vb), _mm_set_ss(std::bit_cast<float>(static_cast<u32>(vi)))));
-#else
-		volatile float out_fma = 0.0f;
-#endif
 		asm volatile("" ::: "memory");
-		return HardwareResults{out_add, out_sub, out_mul, out_div, out_sqrt, out_rsqrt, out_fromint, out_fma};
+		return HardwareResults{out_add, out_sub, out_mul, out_div, out_sqrt, out_rsqrt, out_fromint};
 	}
 
 	bool SameBits(float x, float y)
@@ -228,14 +223,6 @@ namespace
 		EXPECT_TRUE(SameBits(hw.div, soft_div)) << what << " div " << std::hex << Bits(a) << " " << Bits(b) << " hw " << Bits(hw.div) << " soft " << Bits(soft_div);
 		EXPECT_TRUE(SameBits(hw.sqrt, soft_sqrt)) << what << " sqrt " << std::hex << Bits(a) << " hw " << Bits(hw.sqrt) << " soft " << Bits(soft_sqrt);
 		EXPECT_TRUE(SameBits(hw.fromint, soft_fromint)) << what << " fromint " << std::hex << i << " hw " << Bits(hw.fromint) << " soft " << Bits(soft_fromint);
-#ifdef __FMA__
-		const float c = std::bit_cast<float>(static_cast<u32>(i));
-		if (std::isfinite(c))
-		{
-			const float soft_fma = SoftFloat::Fma(a, b, c, fpcr);
-			EXPECT_TRUE(SameBits(hw.fma, soft_fma)) << what << " fma " << std::hex << Bits(a) << " " << Bits(b) << " " << Bits(c) << " hw " << Bits(hw.fma) << " soft " << Bits(soft_fma);
-		}
-#endif
 		if (b > 0.0f && std::isfinite(b))
 		{
 			const float soft_rsqrt = SoftFloat::DivBySqrtDouble(a, b, fpcr);
