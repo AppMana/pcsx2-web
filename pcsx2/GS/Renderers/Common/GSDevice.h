@@ -13,6 +13,7 @@
 #include "GS/GSAlignedClass.h"
 #include "GS/GSExtra.h"
 #include <array>
+#include <functional>
 #include <span>
 
 enum class Filter
@@ -1473,6 +1474,7 @@ protected:
 	static constexpr u32 EXPAND_BUFFER_SIZE = sizeof(u16) * 16383 * 6;
 
 	WindowInfo m_window_info;
+	std::function<void(bool)> m_create_complete_callback;
 	GSVSyncMode m_vsync_mode = GSVSyncMode::Disabled;
 	bool m_allow_present_throttle = false;
 	u64 m_last_frame_displayed_time = 0;
@@ -1579,6 +1581,16 @@ public:
 
 	virtual bool Create(GSVSyncMode vsync_mode, bool allow_present_throttle);
 	virtual void Destroy();
+
+	/// Backends whose Create() cannot complete synchronously (WebGPU in the browser) return true from
+	/// Create() with the device still pending, and invoke the completion callback from their event loop.
+	virtual bool IsCreatePending() const { return false; }
+	using CreateCompleteCallback = std::function<void(bool)>;
+	void SetCreateCompleteCallback(CreateCompleteCallback callback) { m_create_complete_callback = std::move(callback); }
+
+	/// True while readbacks queued through GSDownloadTexture::MapAsync() have not completed; the
+	/// event-loop driven GS thread keeps turning before closing the device so they can finish.
+	virtual bool HasPendingAsyncWork() const { return false; }
 
 	/// Returns the graphics API used by this device.
 	virtual RenderAPI GetRenderAPI() const = 0;

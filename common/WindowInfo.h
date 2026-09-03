@@ -15,10 +15,12 @@ struct WindowInfo
 		Win32,
 		X11,
 		Wayland,
-		MacOS
+		MacOS,
+		WebCanvas
 	};
 
 	/// The type of the surface. Surfaceless indicates it will not be displayed on screen at all.
+	/// WebCanvas (Emscripten) carries a NUL-terminated CSS selector for the canvas in window_handle.
 	Type type = Type::Surfaceless;
 
 	/// Connection to the display server. On most platforms except X11/Wayland, this is implicit and null.

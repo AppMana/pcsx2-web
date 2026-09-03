@@ -2,13 +2,19 @@
 // src/contract.js): window.__pcsx2Runtime = { run, stop, setPad, snapshot,
 // exportInputTrace }. The module itself lives in runtime-worker.mjs; this
 // page fetches the BIOS from origin-private storage and the target either
-// from its fixture URL (an ELF) or names it in storage (a "/opfs/..." path:
-// an ELF is read and handed over, a disc image stays in storage and is opened
-// by the core's OPFS reader), hands everything to the worker, and relays the
-// report.
+// from its fixture URL (an ELF or a GS dump) or names it in storage (a
+// "/opfs/..." path: an ELF is read and handed over, a disc image stays in
+// storage and is opened by the core's OPFS reader), hands everything to the
+// worker, and relays the report.
+import { isGsDumpTarget } from "./pcsx2-report.mjs";
+
 const BIOS_DIR = "pcsx2/bios";
 const MOUNT_ROOT = "/opfs";
 const DISC_EXTENSIONS = /\.(iso|bin|img|mdf|chd|cso|zso|gz|dump)$/i;
+// The canvas the GS presents to. transferControlToOffscreen() is permanent,
+// so every run gets a fresh element under the same id.
+const CANVAS_ID = "pcsx2-canvas";
+const CANVAS_SELECTOR = `#${CANVAS_ID}`;
 
 /** @type {Worker | undefined} */
 let activeWorker;
@@ -76,9 +82,9 @@ async function fetchTarget(target) {
   return { name, bytes };
 }
 
-// Resolves a run target to what the worker boots: { elf } for an ELF (fetched
-// from its URL or read from storage) or { disc } for a disc image in storage,
-// named by its mount path so the core opens it in place.
+// Resolves a run target to what the worker boots: { elf } for an ELF or GS
+// dump (fetched from its URL or read from storage) or { disc } for a disc
+// image in storage, named by its mount path so the core opens it in place.
 async function resolveTarget(target) {
   if (!String(target).startsWith(`${MOUNT_ROOT}/`)) return { elf: await fetchTarget(target) };
   const relative = storageRelative(target);
@@ -86,13 +92,32 @@ async function resolveTarget(target) {
   return { elf: await readStoredFile(relative) };
 }
 
-// target: the URL of an ELF relative to this page, for example
-// "tests/fixtures/hello_tty/hello_tty.elf" (served from the repository's
-// fixture tree), or the mount path of a stored file such as
-// "/opfs/games/game.iso" (ISO/BIN or CHD; an ELF there is staged like a
-// fetched one). options: frames, render, renderer, bios (storage path of the
+// Replaces the presentation canvas with a fresh element of the requested
+// size and hands its OffscreenCanvas to the caller.
+function takeCanvas(width, height) {
+  const previous = document.getElementById(CANVAS_ID);
+  const canvas = document.createElement("canvas");
+  canvas.id = CANVAS_ID;
+  canvas.width = width;
+  canvas.height = height;
+  canvas.setAttribute("aria-label", "PCSX2 output");
+  if (previous) previous.replaceWith(canvas);
+  else (document.getElementById("canvas-host") ?? document.body).appendChild(canvas);
+  return canvas.transferControlToOffscreen();
+}
+
+// target: the URL of an ELF or a GS dump (.gs, .gs.xz, .gs.zst) relative to
+// this page, for example "tests/fixtures/hello_tty/hello_tty.elf" (served
+// from the repository's fixture tree), or the mount path of a stored file
+// such as "/opfs/games/game.iso" (ISO/BIN or CHD, opened in place by the
+// core; an ELF there is staged like a fetched one). Dumps replay through
+// GSDumpReplayer and need no BIOS. options: frames, render (true: WebGPU hardware renderer,
+// false: null renderer), renderer ("webgpu" | "sw" | "null"), gsHost
+// ("worker" | "main": where the GS pump runs), readback ("none" | "async"),
+// captureRgba, captureEvery, captureFrames (oracle frame numbers to read
+// back), loops (dump replays), bios (storage path of the
 // BIOS file), settings (Section/Key -> value), cpu, trace { cpu, ramEvery,
-// tty }, timeoutMs, pthreadPoolSize, coreUrl, pad.
+// tty }, timeoutMs, pthreadPoolSize, coreUrl, pad, canvasWidth, canvasHeight.
 function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
   if (active) return active;
   activeWorker?.terminate();
@@ -100,11 +125,16 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
   recordedInputs = [];
   active = (async () => {
     const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
+    const isDump = isGsDumpTarget(target);
     showStatus(`loading ${target}`);
-    const biosPath = options.bios ? storageRelative(options.bios) : await defaultBiosPath();
-    const [bios, resolved] = await Promise.all([readStoredFile(biosPath), resolveTarget(target)]);
+    const biosPath = options.bios ? storageRelative(options.bios) : isDump ? undefined : await defaultBiosPath();
+    const [bios, resolved] = await Promise.all([biosPath ? readStoredFile(biosPath) : undefined, resolveTarget(target)]);
     const { elf, disc } = resolved;
-    showStatus(`booting ${elf ? elf.name : disc.path} with ${bios.name}`);
+    showStatus(`booting ${elf ? elf.name : disc.path}${bios ? ` with ${bios.name}` : ""}`);
+    const wantsCanvas = options.render === true || options.renderer === "webgpu";
+    const canvasWidth = Number.isInteger(options.canvasWidth) ? options.canvasWidth : 640;
+    const canvasHeight = Number.isInteger(options.canvasHeight) ? options.canvasHeight : 480;
+    const canvas = wantsCanvas ? takeCanvas(canvasWidth, canvasHeight) : undefined;
     const worker = new Worker("./runtime-worker.mjs", { type: "module" });
     activeWorker = worker;
     const events = [];
@@ -135,9 +165,14 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         clearTimeout(timeout);
         reject(new Error(`PCSX2 runtime worker error: ${event.message || ""} ${event.filename || ""}:${event.lineno || 0}`.trim()));
       }, { once: true });
+      const transfer = [];
+      if (elf) transfer.push(elf.bytes);
+      if (bios) transfer.push(bios.bytes);
+      if (canvas) transfer.push(canvas);
       worker.postMessage({
         type: "boot",
         target,
+        isDump,
         coreUrl: options.coreUrl,
         pthreadPoolSize: options.pthreadPoolSize,
         bios,
@@ -145,6 +180,16 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         disc,
         render: options.render,
         renderer: options.renderer,
+        gsHost: options.gsHost,
+        readback: options.readback,
+        captureRgba: options.captureRgba,
+        captureEvery: options.captureEvery,
+        captureFrames: options.captureFrames,
+        loops: options.loops,
+        canvas,
+        canvasSelector: CANVAS_SELECTOR,
+        canvasWidth,
+        canvasHeight,
         settings: options.settings ?? {},
         cpu: options.cpu ?? "interpreter",
         trace: options.trace,
@@ -152,7 +197,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         timeoutMs,
         progressIntervalMs: options.progressIntervalMs,
         pad: options.pad ?? currentPad,
-      }, elf ? [bios.bytes, elf.bytes] : [bios.bytes]);
+      }, transfer);
     }).finally(() => {
       if (activeWorker === worker) activeWorker = undefined;
       worker.terminate();

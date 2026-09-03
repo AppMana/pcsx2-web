@@ -4,8 +4,10 @@
 #pragma once
 
 #include "GS/GSState.h"
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 class GSRenderer : public GSState
 {
@@ -15,6 +17,19 @@ private:
 	void EndPresentFrame();
 
 	u64 m_shader_time_start = 0;
+
+	struct SnapshotDownload
+	{
+		GSTexture* rt = nullptr;
+		std::unique_ptr<GSDownloadTexture> dl;
+		u32 draw_width = 0;
+		u32 draw_height = 0;
+		u32 image_width = 0;
+		u32 image_height = 0;
+	};
+
+	bool PrepareSnapshotDownload(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders, SnapshotDownload* sd);
+	static void CopySnapshotPixels(const SnapshotDownload& sd, u32* width, u32* height, std::vector<u32>* pixels);
 
 	std::string m_snapshot;
 	u32 m_dump_frames = 0;
@@ -53,6 +68,13 @@ public:
 
 	bool SaveSnapshotToMemory(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
 		u32* width, u32* height, std::vector<u32>* pixels);
+
+	/// SaveSnapshotToMemory() for backends whose readbacks complete on an event loop: the frame is
+	/// rendered and copied now, and the callback receives the pixels once the map finishes (an empty
+	/// image if it failed). Returns false, without calling back, if nothing could be queued.
+	using SnapshotCallback = std::function<void(u32 width, u32 height, std::vector<u32> pixels)>;
+	bool SaveSnapshotToMemoryAsync(u32 window_width, u32 window_height, bool apply_aspect, bool crop_borders,
+		SnapshotCallback callback);
 
 	void QueueSnapshot(const std::string& path, const u32 gsdump_frames);
 	void StopGSDump();

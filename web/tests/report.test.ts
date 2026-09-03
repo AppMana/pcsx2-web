@@ -1,19 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { validateReport } from "@appmana-public/web-emulator-harness/report";
-import { INTERPRETER_SETTINGS, RENDERERS, STATUS, TtyDecoder, createRunReport, rendererId, splitSettingKey, statusName } from "../public/pcsx2-report.mjs";
+import { INTERPRETER_SETTINGS, RENDERERS, STATUS, TtyDecoder, bytesToBase64, createRunReport, isGsDumpTarget, rendererId, splitSettingKey, statusName } from "../public/pcsx2-report.mjs";
 
 describe("renderer selection", () => {
-  it("selects the null renderer when rendering is off and the software renderer by default", () => {
+  it("selects the null renderer when rendering is off, WebGPU when it is on, and the software renderer by default", () => {
     expect(rendererId({ render: false })).toBe(11);
     expect(rendererId({ render: false, renderer: "sw" })).toBe(11);
     expect(rendererId({})).toBe(RENDERERS.sw);
-    expect(rendererId({ render: true })).toBe(13);
+    expect(rendererId({ render: true })).toBe(18);
+    expect(rendererId({ render: true, renderer: "sw" })).toBe(13);
     expect(rendererId({ renderer: "SW" })).toBe(13);
+    expect(rendererId({ renderer: "webgpu" })).toBe(RENDERERS.webgpu);
     expect(rendererId({ renderer: "null" })).toBe(11);
     expect(rendererId({ renderer: "auto" })).toBe(-1);
     expect(rendererId({ renderer: "21" })).toBe(21);
     expect(rendererId({ renderer: 14 })).toBe(14);
-    expect(() => rendererId({ renderer: "webgpu" })).toThrow(/unknown renderer/);
+    expect(() => rendererId({ renderer: "d3d9" })).toThrow(/unknown renderer/);
+  });
+
+  it("recognises GS dump targets and encodes frame bytes", () => {
+    expect(isGsDumpTarget("tests/fixtures/gs_sprite/expected/dumps/frame00450.gs.zst")).toBe(true);
+    expect(isGsDumpTarget("a/b.gs.xz")).toBe(true);
+    expect(isGsDumpTarget("a/b.gs")).toBe(true);
+    expect(isGsDumpTarget("a/b.elf")).toBe(false);
+    expect(bytesToBase64(new Uint8Array([0, 1, 2, 255]))).toBe(Buffer.from([0, 1, 2, 255]).toString("base64"));
+    const big = new Uint8Array(100_000).map((_, index) => index & 0xff);
+    expect(bytesToBase64(big)).toBe(Buffer.from(big).toString("base64"));
   });
 });
 

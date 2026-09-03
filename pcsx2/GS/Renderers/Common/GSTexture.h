@@ -6,6 +6,7 @@
 #include "common/EnumOps.h"
 #include "GS/GSVector.h"
 
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -297,6 +298,12 @@ public:
 	/// Unmaps the CPU-readable copy of the texture. May be a no-op on backends which
 	/// support persistent-mapped buffers.
 	virtual void Unmap() = 0;
+
+	/// Maps the texture without blocking; the callback runs from the backend's event loop once the
+	/// contents are readable (true) or the map failed (false). Returns false when the backend has no
+	/// asynchronous map, in which case the callback is never invoked. Flush() must be called first.
+	using MapAsyncCallback = std::function<void(bool)>;
+	virtual bool MapAsync(MapAsyncCallback callback) { return false; }
 
 	/// Flushes pending writes from the CPU to the GPU, and reads from the GPU to the CPU.
 	/// This may cause a command buffer submit depending on if one has occurred between the last

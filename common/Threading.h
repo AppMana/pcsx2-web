@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <functional>
+#include <string>
 
 namespace Threading
 {
@@ -110,6 +111,12 @@ namespace Threading
 		/// Sets the stack size for the thread. Do not call if the thread has already been started.
 		void SetStackSize(u32 size);
 
+#ifdef __EMSCRIPTEN__
+		/// Comma-separated CSS selectors of canvases whose OffscreenCanvas is transferred to the
+		/// thread when it starts (emscripten_pthread_attr_settransferredcanvases).
+		void SetTransferredCanvases(std::string canvases);
+#endif
+
 		bool Start(EntryPoint func);
 		void Detach();
 		void Join();
@@ -122,6 +129,9 @@ namespace Threading
 #endif
 
 		u32 m_stack_size = 0;
+#ifdef __EMSCRIPTEN__
+		std::string m_transferred_canvases;
+#endif
 	};
 
 	/// A semaphore that may not have a fast userspace path

@@ -57,6 +57,10 @@
 
 #include "fmt/format.h"
 
+#ifdef PCSX2_WEB
+#include <emscripten/eventloop.h>
+#endif
+
 #include <fstream>
 
 Pcsx2Config::GSOptions GSConfig;
@@ -122,6 +126,44 @@ static RenderAPI GetAPIForRenderer(GSRendererType renderer)
 	}
 }
 
+static bool FinishOpenGSDevice(bool created, bool clear_state_on_fail);
+static bool OpenGSRenderer(GSRendererType renderer, u8* basemem);
+static void CloseGSDevice(bool clear_state);
+
+#ifdef PCSX2_WEB
+// GSopen() state while the WebGPU device is being created asynchronously.
+static bool s_open_pending = false;
+static GSRendererType s_open_pending_renderer = GSRendererType::Auto;
+static u8* s_open_pending_basemem = nullptr;
+
+static void ContinueOpenGSDevice(bool created)
+{
+	bool res = FinishOpenGSDevice(created, true);
+	if (res)
+	{
+		res = OpenGSRenderer(s_open_pending_renderer, s_open_pending_basemem);
+		if (!res)
+			CloseGSDevice(true);
+	}
+
+	if (!res)
+	{
+		Host::ReportErrorAsync("Error",
+			fmt::format(TRANSLATE_FS("GS", "Failed to create render device. This may be due to your GPU not supporting the "
+			                               "chosen renderer ({}), or because your graphics drivers need to be updated."),
+			            Pcsx2Config::GSOptions::GetRendererName(GSConfig.Renderer)));
+	}
+
+	s_open_pending = false;
+	MTGS::WebOpenComplete(res);
+}
+
+bool GSIsOpenPending()
+{
+	return s_open_pending;
+}
+#endif
+
 static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool recreate_window,
 	GSVSyncMode vsync_mode, bool allow_present_throttle)
 {
@@ -168,6 +210,25 @@ static bool OpenGSDevice(GSRendererType renderer, bool clear_state_on_fail, bool
 	}
 
 	bool okay = g_gs_device->Create(vsync_mode, allow_present_throttle);
+#ifdef PCSX2_WEB
+	if (okay && g_gs_device->IsCreatePending())
+	{
+		// The device arrives on the GS thread's event loop; GSopen() picks up in ContinueOpenGSDevice().
+		s_open_pending = true;
+		g_gs_device->SetCreateCompleteCallback([](bool created) {
+			// Run from a fresh event loop turn so a failed device can be destroyed outside its own callback.
+			emscripten_set_timeout([](void* userdata) { ContinueOpenGSDevice(userdata != nullptr); }, 0, created ? reinterpret_cast<void*>(1) : nullptr);
+		});
+		return true;
+	}
+#endif
+	return FinishOpenGSDevice(okay, clear_state_on_fail);
+}
+
+static bool FinishOpenGSDevice(bool created, bool clear_state_on_fail)
+{
+	const RenderAPI new_api = g_gs_device->GetRenderAPI();
+	bool okay = created;
 	if (okay)
 	{
 		okay = ImGuiManager::Initialize();
@@ -320,6 +381,13 @@ bool GSreopen(bool recreate_device, bool recreate_renderer, GSRendererType new_r
 
 	if (recreate_device)
 	{
+#ifdef PCSX2_WEB
+		if (GetAPIForRenderer(new_renderer) == RenderAPI::WebGPU || g_gs_device->GetRenderAPI() == RenderAPI::WebGPU)
+		{
+			Console.Error("(GSreopen) Recreating the WebGPU device in the browser is not supported.");
+			return false;
+		}
+#endif
 		// We need a new render window when changing APIs.
 		const bool recreate_window = (g_gs_device->GetRenderAPI() != GetAPIForRenderer(GSConfig.Renderer));
 		const GSVSyncMode vsync_mode = g_gs_device->GetVSyncMode();
@@ -376,6 +444,15 @@ bool GSopen(const Pcsx2Config::GSOptions& config, GSRendererType renderer, u8* b
 		renderer = GSUtil::GetPreferredRenderer();
 
 	bool res = OpenGSDevice(renderer, true, false, vsync_mode, allow_present_throttle);
+#ifdef PCSX2_WEB
+	if (res && s_open_pending)
+	{
+		// Completed by ContinueOpenGSDevice() once the device callback fires.
+		s_open_pending_renderer = renderer;
+		s_open_pending_basemem = basemem;
+		return true;
+	}
+#endif
 	if (res)
 	{
 		res = OpenGSRenderer(renderer, basemem);

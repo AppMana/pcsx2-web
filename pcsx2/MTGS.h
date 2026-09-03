@@ -8,6 +8,7 @@
 #include "common/Threading.h"
 
 #include <functional>
+#include <string>
 
 /////////////////////////////////////////////////////////////////////////////
 // MTGS Threaded Class Declaration
@@ -80,10 +81,17 @@ namespace MTGS
 	void SetRunIdle(bool enabled);
 
 #ifdef ARCH_WASM32
-	/// Runs the GS pump on the calling (browser main) thread's event loop instead of a pthread.
+	/// Runs the GS pump on the module's main thread event loop instead of a pthread.
 	/// Must be called before StartThread().
 	void SetWebPumpOnMainThread(bool enabled);
 	bool IsWebPumpOnMainThread();
+
+	/// CSS selector of the canvas whose OffscreenCanvas is transferred to the GS pthread when it starts
+	/// (empty: no canvas). Must be called before StartThread().
+	void SetWebCanvasSelector(std::string selector);
+
+	/// Called on the GS thread by GS.cpp once an asynchronous GSopen() has finished.
+	void WebOpenComplete(bool opened);
 #endif
 
 	// Size of the ringbuffer as a power of 2 -- size is a multiple of simd128s.

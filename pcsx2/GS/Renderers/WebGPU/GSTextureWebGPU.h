@@ -80,6 +80,7 @@ public:
 
 	bool Map(const GSVector4i& read_rc) override;
 	void Unmap() override;
+	bool MapAsync(MapAsyncCallback callback) override;
 
 	void Flush() override;
 
@@ -97,12 +98,23 @@ private:
 
 	GSDownloadTextureWebGPU(u32 width, u32 height, GSTexture::Format format);
 
+	// Outlives the texture: the map callback owns it, and a texture destroyed (or unmapped) while
+	// the map is in flight clears owner so the late callback is dropped.
+	struct AsyncMapRequest
+	{
+		GSDownloadTextureWebGPU* owner;
+		MapAsyncCallback callback;
+	};
+
 	static void MapCallback(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1, void* userdata2);
+	static void MapCallbackAsync(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1, void* userdata2);
 
 	void UnmapBuffer();
+	void CancelAsyncMap();
 
 	WGPUBuffer m_buffer = nullptr;
 	WGPUFuture m_map_future = WGPU_FUTURE_INIT;
+	AsyncMapRequest* m_async_map = nullptr;
 	MapState m_map_state = MapState::Unmapped;
 	bool m_map_failed = false;
 
