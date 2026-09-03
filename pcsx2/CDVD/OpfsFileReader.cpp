@@ -42,6 +42,7 @@ extern "C" {
 void pcsx2_web_opfs_open(em_proxying_ctx* ctx, const char* path, OpfsOpenResult* result);
 double pcsx2_web_opfs_read(int handle, void* dst, double offset, int length);
 void pcsx2_web_opfs_close(int handle);
+void pcsx2_web_opfs_heartbeat(em_proxying_queue* queue);
 }
 
 namespace
@@ -78,6 +79,7 @@ namespace
 					m_started = true;
 				}
 				m_condition.notify_all();
+				pcsx2_web_opfs_heartbeat(m_queue.queue);
 				emscripten_exit_with_live_runtime();
 			});
 

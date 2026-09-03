@@ -125,6 +125,17 @@ addToLibrary({
     }
   },
 
+  // Executes the OPFS thread's proxying queue on a timer as well, the way wasmfs's
+  // ProxyWorker does: a mailbox notification relayed through a busy main thread can be
+  // late, and this bounds the latency of every proxied open, read and close.
+  pcsx2_web_opfs_heartbeat__deps: ['emscripten_proxy_execute_queue'],
+  pcsx2_web_opfs_heartbeat: (queue) => {
+    var interval = setInterval(() => {
+      if (ABORT) clearInterval(interval);
+      else _emscripten_proxy_execute_queue(queue);
+    }, 4);
+  },
+
   pcsx2_web_opfs_close__deps: ['$PcsxOpfs'],
   pcsx2_web_opfs_close: (handle) => {
     var file = PcsxOpfs.files.get(handle);

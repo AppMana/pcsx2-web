@@ -28,7 +28,7 @@ target_link_options(pcsx2_web_runtime PRIVATE
 	"-sNO_EXIT_RUNTIME=1"
 	"-sFORCE_FILESYSTEM=1"
 	"-sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap','HEAPU8','HEAP32','HEAPU32','PThread','GL','UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-	"-sEXPORTED_FUNCTIONS=['_malloc','_free','_emscripten_proxy_finish']"
+	"-sEXPORTED_FUNCTIONS=['_malloc','_free','_emscripten_proxy_finish','_emscripten_proxy_execute_queue']"
 	"-sWASM_BIGINT=1"
 	"-sASSERTIONS=1"
 	"--js-library=${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_opfs.js"
