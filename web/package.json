@@ -1,0 +1,45 @@
+{
+  "name": "pcsx2-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser page layer for the PCSX2 wasm port: runtime, storage, unit and capability pages plus the Playwright lanes.",
+  "packageManager": "yarn@4.13.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepare:assets": "node scripts/stage-assets.mjs",
+    "postinstall": "yarn prepare:assets",
+    "dev": "vite --host 0.0.0.0",
+    "build": "yarn prepare:assets && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "build:core": "bash scripts/build-pcsx2-core.sh",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:gpu": "playwright test --config playwright.gpu.config.ts",
+    "test:units:browser": "yarn build && playwright test browser-units.spec.ts",
+    "storage:import-host": "import-host-opfs --url http://127.0.0.1:4193 --page /storage.html",
+    "storage:inspect": "inspect-opfs --url http://127.0.0.1:4193 --page /storage.html",
+    "serve-library": "node scripts/serve-library.mjs --port 4195",
+    "oracle:record": "bash scripts/oracle-record.sh",
+    "compare:frame": "compare-frames",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@appmana-public/disc-images": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/disc-images&commit=742b7b9aef1a1531807dbf187947fdf057f85f56",
+    "@appmana-public/web-emulator-harness": "https://github.com/AppMana/web-emulator-kit.git#workspace=@appmana-public/web-emulator-harness&commit=742b7b9aef1a1531807dbf187947fdf057f85f56"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.3.0",
+    "@types/pngjs": "6.0.5",
+    "@webgpu/types": "0.1.64",
+    "playwright": "1.62.1",
+    "pngjs": "7.0.0",
+    "smol-toml": "1.8.0",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "3.2.7"
+  }
+}

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PCSX2 Web · Storage</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #080a0f; color: #e8ecf4; }
+      main { width: min(900px, 100%); margin: auto; padding: max(16px, env(safe-area-inset-top)) 16px; }
+      h1 { font-size: clamp(20px, 4vw, 30px); }
+      section { margin: 14px 0; padding: 16px; border: 1px solid #2a3447; border-radius: 10px; background: #111620; }
+      h2 { margin-top: 0; font-size: 16px; }
+      p, pre { color: #aeb9ca; font-size: 12px; line-height: 1.5; }
+      select, label, button { display: inline-block; max-width: 100%; margin: 5px 8px 5px 0; padding: 10px 12px; border: 1px solid #526078; border-radius: 7px; background: #1a2230; color: white; font: inherit; }
+      label:active, button:active { background: #4968ff; }
+      input[type=file] { display: none; }
+      code { color: #cfd8e6; }
+      progress { width: 100%; height: 16px; }
+      #files { max-height: 280px; overflow: auto; white-space: pre-wrap; }
+      .good { color: #92f3b4; }
+      .warn { color: #ffd17d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PCSX2 browser storage</h1>
+      <section>
+        <h2>Device capacity</h2>
+        <p id="capacity">Inspecting origin-private storage…</p>
+        <button id="persist">Request persistent storage</button>
+      </section>
+      <section>
+        <h2>BIOS</h2>
+        <p>Copies a PS2 BIOS dump into <code>/opfs/pcsx2/bios/</code>. It stays in this browser profile and is never uploaded.</p>
+        <label>Select BIOS files<input id="bios" type="file" accept=".bin,.BIN,.rom0,.mec,.nvm,.erom,.rom1,.rom2,application/octet-stream" multiple /></label>
+      </section>
+      <section>
+        <h2>Game</h2>
+        <p>Select a disc image (ISO, CHD, CSO, GZ) or an ELF; it goes to <code>/opfs/games/</code>.</p>
+        <label>Select game<input id="game" type="file" accept=".iso,.ISO,.chd,.cso,.gz,.elf,application/octet-stream" multiple /></label>
+      </section>
+      <section>
+        <h2>Library</h2>
+        <p>Downloads a file from this origin's <code>/library/</code> with resumable HTTP Range requests, written straight into origin-private storage by a worker and verified against the server's SHA-256. Open <code>storage.html?import=&lt;name&gt;&amp;destination=games|pcsx2/bios</code> to start one without pressing anything.</p>
+        <select id="library-file"><option value="">Loading library index…</option></select>
+        <select id="library-destination">
+          <option value="games">games/</option>
+          <option value="pcsx2/bios">pcsx2/bios/</option>
+        </select>
+        <button id="library-import">Import from library</button>
+        <button id="library-abort" disabled>Abort</button>
+        <p id="library-status">Idle</p>
+      </section>
+      <section>
+        <h2>Transfer</h2>
+        <progress id="progress" max="1" value="0"></progress>
+        <p id="transfer">Idle</p>
+      </section>
+      <section>
+        <h2>Stored files</h2>
+        <button id="refresh">Refresh</button>
+        <pre id="files">None</pre>
+      </section>
+    </main>
+    <script type="module" src="./storage-runtime.mjs"></script>
+  </body>
+</html>
