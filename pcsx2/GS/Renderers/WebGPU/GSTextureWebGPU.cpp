@@ -11,6 +11,9 @@
 #include "common/Console.h"
 #include "common/StringUtil.h"
 
+#include <memory>
+#include <utility>
+
 static bool IsDepthFormat(WGPUTextureFormat format)
 {
 	return (format == WGPUTextureFormat_Depth32Float || format == WGPUTextureFormat_Depth32FloatStencil8);
@@ -389,7 +392,12 @@ GSDownloadTextureWebGPU::~GSDownloadTextureWebGPU()
 	if (m_buffer)
 	{
 		if (m_map_state == MapState::Pending)
-			GSDeviceWebGPU::GetInstance()->WaitForFuture(m_map_future);
+		{
+			if (m_async_map)
+				CancelAsyncMap();
+			else
+				GSDeviceWebGPU::GetInstance()->WaitForFuture(m_map_future);
+		}
 		wgpuBufferRelease(m_buffer);
 	}
 }
@@ -416,10 +424,29 @@ std::unique_ptr<GSDownloadTextureWebGPU> GSDownloadTextureWebGPU::Create(u32 wid
 	return tex;
 }
 
+void GSDownloadTextureWebGPU::CancelAsyncMap()
+{
+	// wgpuBufferUnmap() on a buffer with a map in flight rejects that map; the callback still fires
+	// (with an abort status) and must not touch this texture any more.
+	AsyncMapRequest* const request = std::exchange(m_async_map, nullptr);
+	request->owner = nullptr;
+	const MapAsyncCallback callback = std::move(request->callback);
+	m_map_state = MapState::Unmapped;
+	m_map_pointer = nullptr;
+	GSDeviceWebGPU::GetInstance()->AddPendingAsyncMap(-1);
+	if (callback)
+		callback(false);
+}
+
 void GSDownloadTextureWebGPU::UnmapBuffer()
 {
 	if (m_map_state == MapState::Pending)
-		GSDeviceWebGPU::GetInstance()->WaitForFuture(m_map_future);
+	{
+		if (m_async_map)
+			CancelAsyncMap();
+		else
+			GSDeviceWebGPU::GetInstance()->WaitForFuture(m_map_future);
+	}
 
 	if (m_map_state != MapState::Unmapped)
 		wgpuBufferUnmap(m_buffer);
@@ -484,6 +511,55 @@ void GSDownloadTextureWebGPU::MapCallback(WGPUMapAsyncStatus status, WGPUStringV
 	}
 }
 
+void GSDownloadTextureWebGPU::MapCallbackAsync(WGPUMapAsyncStatus status, WGPUStringView message, void* userdata1, void* userdata2)
+{
+	std::unique_ptr<AsyncMapRequest> request(static_cast<AsyncMapRequest*>(userdata1));
+	GSDownloadTextureWebGPU* const tex = request->owner;
+	if (!tex)
+		return;
+
+	tex->m_async_map = nullptr;
+	GSDeviceWebGPU::GetInstance()->AddPendingAsyncMap(-1);
+	if (status != WGPUMapAsyncStatus_Success)
+	{
+		Console.Error("WebGPU: Asynchronous readback map failed (%u): %.*s", static_cast<u32>(status), static_cast<int>(message.length), message.data);
+		tex->m_map_state = MapState::Unmapped;
+		tex->m_map_pointer = nullptr;
+		request->callback(false);
+		return;
+	}
+
+	tex->m_map_pointer = static_cast<const u8*>(wgpuBufferGetConstMappedRange(tex->m_buffer, 0, tex->m_buffer_size));
+	tex->m_map_state = MapState::Mapped;
+	request->callback(tex->m_map_pointer != nullptr);
+}
+
+bool GSDownloadTextureWebGPU::MapAsync(MapAsyncCallback callback)
+{
+	if (m_needs_flush)
+		Flush();
+
+	if (m_map_state == MapState::Mapped)
+	{
+		callback(true);
+		return true;
+	}
+	if (m_map_state == MapState::Pending)
+		return false;
+
+	AsyncMapRequest* const request = new AsyncMapRequest{this, std::move(callback)};
+	WGPUBufferMapCallbackInfo cbi = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+	cbi.mode = WGPUCallbackMode_AllowSpontaneous;
+	cbi.callback = &GSDownloadTextureWebGPU::MapCallbackAsync;
+	cbi.userdata1 = request;
+	m_map_failed = false;
+	m_async_map = request;
+	m_map_state = MapState::Pending;
+	GSDeviceWebGPU::GetInstance()->AddPendingAsyncMap(1);
+	m_map_future = wgpuBufferMapAsync(m_buffer, WGPUMapMode_Read, 0, WGPU_WHOLE_MAP_SIZE, cbi);
+	return true;
+}
+
 bool GSDownloadTextureWebGPU::Map(const GSVector4i& read_rc)
 {
 	if (m_map_state == MapState::Mapped)
@@ -493,6 +569,12 @@ bool GSDownloadTextureWebGPU::Map(const GSVector4i& read_rc)
 		Flush();
 
 	GSDeviceWebGPU* const dev = GSDeviceWebGPU::GetInstance();
+
+	// Without a blocking wait the contents are only reachable through MapAsync(); readers that
+	// need them now (the texture cache) are disabled by HWDownloadMode = NoReadbacks.
+	if (dev->IsEventLoopDriven())
+		return false;
+
 	if (m_map_state == MapState::Unmapped)
 	{
 		WGPUBufferMapCallbackInfo cbi = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
@@ -530,6 +612,14 @@ void GSDownloadTextureWebGPU::Flush()
 	GSDeviceWebGPU* const dev = GSDeviceWebGPU::GetInstance();
 	if (dev->GetCompletedFenceCounter() >= m_copy_fence_counter)
 		return;
+
+	if (dev->IsEventLoopDriven())
+	{
+		// Submit the copy; mapAsync() orders itself after it, so the wait happens in the callback.
+		if (dev->GetCurrentFenceCounter() == m_copy_fence_counter)
+			dev->ExecuteCommandBuffer(false);
+		return;
+	}
 
 	if (dev->GetCurrentFenceCounter() == m_copy_fence_counter)
 		dev->ExecuteCommandBufferForReadback();

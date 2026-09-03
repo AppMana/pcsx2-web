@@ -3,7 +3,7 @@ import { defineHarnessConfig } from "@appmana-public/web-emulator-harness/playwr
 
 // Specs that need a physical WebGPU adapter run in the hardware lane
 // (playwright.gpu.config.ts); the default lane ignores them.
-export const GPU_SPECS = ["elf-webgpu.spec.ts", "frame-oracle.spec.ts", "*-gpu.spec.ts"];
+export const GPU_SPECS = ["elf-webgpu.spec.ts", "frame-oracle.spec.ts", "gsdump-webgpu.spec.ts", "*-gpu.spec.ts"];
 
 // PCSX2_PREVIEW_PORT, PCSX2_GPU_PREVIEW_PORT and PCSX2_LIBRARY_PORT move the
 // three servers so that a second checkout can run the suite at the same time.

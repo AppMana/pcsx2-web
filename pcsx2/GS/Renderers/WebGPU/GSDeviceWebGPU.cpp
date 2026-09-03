@@ -26,6 +26,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/eventloop.h>
+#endif
+
 enum : u32
 {
 	VERTEX_BUFFER_SIZE = 32 * 1024 * 1024,
@@ -92,8 +96,10 @@ void GSDeviceWebGPU::RequestAdapterCallback(WGPURequestAdapterStatus status, WGP
 	Console.Error("WebGPU: RequestAdapter failed (%u): %.*s", static_cast<u32>(status), static_cast<int>(msg.size()), msg.data());
 }
 
-WGPUAdapter GSDeviceWebGPU::RequestAdapter(WGPUInstance instance, WGPUSurface surface)
+WGPURequestAdapterOptions GSDeviceWebGPU::GetRequestAdapterOptions(WGPUSurface surface)
 {
+	// No power preference: headless Chrome returns no adapter for a high-performance request even
+	// when a hardware adapter exists, and native Dawn picks the discrete GPU on its own.
 	WGPURequestAdapterOptions options = WGPU_REQUEST_ADAPTER_OPTIONS_INIT;
 	options.featureLevel = WGPUFeatureLevel_Core;
 	options.compatibleSurface = surface;
@@ -115,6 +121,13 @@ WGPUAdapter GSDeviceWebGPU::RequestAdapter(WGPUInstance instance, WGPUSurface su
 		else if (StringUtil::Strcasecmp(backend, "opengles") == 0)
 			options.backendType = WGPUBackendType_OpenGLES;
 	}
+
+	return options;
+}
+
+WGPUAdapter GSDeviceWebGPU::RequestAdapter(WGPUInstance instance, WGPUSurface surface)
+{
+	const WGPURequestAdapterOptions options = GetRequestAdapterOptions(surface);
 
 	WGPUAdapter adapter = nullptr;
 	WGPURequestAdapterCallbackInfo cbi = WGPU_REQUEST_ADAPTER_CALLBACK_INFO_INIT;
@@ -169,7 +182,7 @@ void GSDeviceWebGPU::QueueWorkDoneCallback(WGPUQueueWorkDoneStatus status, WGPUS
 {
 	GSDeviceWebGPU* const dev = static_cast<GSDeviceWebGPU*>(userdata1);
 	const u64 counter = static_cast<u64>(reinterpret_cast<uintptr_t>(userdata2));
-	if (status != WGPUQueueWorkDoneStatus_Success)
+	if (status != WGPUQueueWorkDoneStatus_Success && status != WGPUQueueWorkDoneStatus_CallbackCancelled)
 	{
 		const std::string_view msg = ToStringView(message);
 		Console.Error("WebGPU: Queue work failed (%u): %.*s", static_cast<u32>(status), static_cast<int>(msg.size()), msg.data());
@@ -205,6 +218,19 @@ void GSDeviceWebGPU::CompilationInfoCallback(WGPUCompilationInfoRequestStatus st
 	}
 }
 
+#ifdef __EMSCRIPTEN__
+
+void GSDeviceWebGPU::CompilationInfoCallbackAsync(WGPUCompilationInfoRequestStatus status, WGPUCompilationInfo const* info, void* userdata1, void* userdata2)
+{
+	std::unique_ptr<std::string> label(static_cast<std::string*>(userdata1));
+	bool has_error = false;
+	CompilationInfoCallback(status, info, &has_error, const_cast<char*>(label->c_str()));
+	if (has_error)
+		Console.Error("WebGPU: Shader %s failed to compile", label->c_str());
+}
+
+#endif
+
 bool GSDeviceWebGPU::WaitForFuture(WGPUFuture future)
 {
 	if (future.id == 0)
@@ -212,6 +238,14 @@ bool GSDeviceWebGPU::WaitForFuture(WGPUFuture future)
 
 	WGPUFutureWaitInfo wait = WGPU_FUTURE_WAIT_INFO_INIT;
 	wait.future = future;
+
+	if (IsEventLoopDriven())
+	{
+		// A zero timeout only reaps futures that already completed on the event loop; blocking here
+		// would deadlock the thread that delivers them.
+		return (wgpuInstanceWaitAny(m_instance, 1, &wait, 0) == WGPUWaitStatus_Success);
+	}
+
 	const WGPUWaitStatus status = wgpuInstanceWaitAny(m_instance, 1, &wait, UINT64_MAX);
 	if (status != WGPUWaitStatus_Success)
 	{
@@ -233,6 +267,12 @@ void GSDeviceWebGPU::WaitForFenceCounter(u64 fence_counter)
 		return;
 
 	ProcessEvents();
+
+	// WebGPU orders queue work itself and wgpuQueueWriteBuffer() copies at call time, so nothing on
+	// the GS thread needs the GPU to have finished. Readbacks are the exception and go through
+	// GSDownloadTexture::MapAsync() when the fence cannot be waited on.
+	if (IsEventLoopDriven())
+		return;
 
 	while (m_completed_fence_counter < fence_counter)
 	{
@@ -447,9 +487,30 @@ bool GSDeviceWebGPU::Create(GSVSyncMode vsync_mode, bool allow_present_throttle)
 	if (!GSDevice::Create(vsync_mode, allow_present_throttle))
 		return false;
 
+#ifdef __EMSCRIPTEN__
+	// Without Asyncify the adapter and device requests are promises that resolve on this thread's
+	// event loop, so creation continues from their callbacks (see BeginCreateAsync).
+	if (!wgpuHasInstanceFeature(WGPUInstanceFeatureName_TimedWaitAny))
+		return BeginCreateAsync();
+#endif
+
 	if (!CreateDeviceAndSurface())
 		return false;
 
+	return CreateResources();
+}
+
+bool GSDeviceWebGPU::IsCreatePending() const
+{
+#ifdef __EMSCRIPTEN__
+	return (m_create_state == CreateState::Pending);
+#else
+	return false;
+#endif
+}
+
+bool GSDeviceWebGPU::CreateResources()
+{
 	if (!CheckFeatures())
 	{
 		Host::ReportErrorAsync("GS", "Your GPU does not support the required WebGPU features.");
@@ -534,7 +595,7 @@ void GSDeviceWebGPU::Destroy()
 	}
 }
 
-bool GSDeviceWebGPU::CreateDeviceAndSurface()
+bool GSDeviceWebGPU::CreateInstanceAndSurface()
 {
 	if (!AcquireWindow(true))
 		return false;
@@ -551,13 +612,11 @@ bool GSDeviceWebGPU::CreateDeviceAndSurface()
 	if (m_window_info.type != WindowInfo::Type::Surfaceless && !CreateSurface())
 		return false;
 
-	m_adapter = RequestAdapter(m_instance, m_surface);
-	if (!m_adapter)
-	{
-		Host::ReportErrorAsync("Error", "No WebGPU adapter available.");
-		return false;
-	}
+	return true;
+}
 
+bool GSDeviceWebGPU::QueryAdapter()
+{
 	WGPUAdapterInfo info = WGPU_ADAPTER_INFO_INIT;
 	if (wgpuAdapterGetInfo(m_adapter, &info) == WGPUStatus_Success)
 	{
@@ -594,52 +653,49 @@ bool GSDeviceWebGPU::CreateDeviceAndSurface()
 		m_device_features.texture_compression_bc &= (list.find("bc") == std::string_view::npos);
 	}
 
-	std::vector<WGPUFeatureName> required_features;
+	m_required_features.clear();
 	if (m_device_features.depth32float_stencil8)
-		required_features.push_back(WGPUFeatureName_Depth32FloatStencil8);
+		m_required_features.push_back(WGPUFeatureName_Depth32FloatStencil8);
 	if (m_device_features.dual_source_blending)
-		required_features.push_back(WGPUFeatureName_DualSourceBlending);
+		m_required_features.push_back(WGPUFeatureName_DualSourceBlending);
 	if (m_device_features.primitive_index)
-		required_features.push_back(WGPUFeatureName_PrimitiveIndex);
+		m_required_features.push_back(WGPUFeatureName_PrimitiveIndex);
 	if (m_device_features.texture_formats_tier1)
-		required_features.push_back(WGPUFeatureName_TextureFormatsTier1);
+		m_required_features.push_back(WGPUFeatureName_TextureFormatsTier1);
 	if (m_device_features.float32_blendable)
-		required_features.push_back(WGPUFeatureName_Float32Blendable);
+		m_required_features.push_back(WGPUFeatureName_Float32Blendable);
 	if (m_device_features.float32_filterable)
-		required_features.push_back(WGPUFeatureName_Float32Filterable);
+		m_required_features.push_back(WGPUFeatureName_Float32Filterable);
 	if (m_device_features.texture_compression_bc)
-		required_features.push_back(WGPUFeatureName_TextureCompressionBC);
+		m_required_features.push_back(WGPUFeatureName_TextureCompressionBC);
 
-	WGPULimits required_limits = WGPU_LIMITS_INIT;
-	required_limits.maxTextureDimension2D = adapter_limits.maxTextureDimension2D;
-	required_limits.maxBufferSize = adapter_limits.maxBufferSize;
-	required_limits.maxStorageBufferBindingSize = adapter_limits.maxStorageBufferBindingSize;
-	required_limits.maxColorAttachmentBytesPerSample = adapter_limits.maxColorAttachmentBytesPerSample;
+	m_required_limits = WGPU_LIMITS_INIT;
+	m_required_limits.maxTextureDimension2D = adapter_limits.maxTextureDimension2D;
+	m_required_limits.maxBufferSize = adapter_limits.maxBufferSize;
+	m_required_limits.maxStorageBufferBindingSize = adapter_limits.maxStorageBufferBindingSize;
+	m_required_limits.maxColorAttachmentBytesPerSample = adapter_limits.maxColorAttachmentBytesPerSample;
+	return true;
+}
 
+WGPUDeviceDescriptor GSDeviceWebGPU::GetDeviceDescriptor()
+{
 	WGPUDeviceDescriptor desc = WGPU_DEVICE_DESCRIPTOR_INIT;
 	desc.label = StringView("PCSX2");
-	desc.requiredFeatureCount = required_features.size();
-	desc.requiredFeatures = required_features.data();
-	desc.requiredLimits = &required_limits;
+	desc.requiredFeatureCount = m_required_features.size();
+	desc.requiredFeatures = m_required_features.data();
+	desc.requiredLimits = &m_required_limits;
 	desc.deviceLostCallbackInfo.mode = WGPUCallbackMode_AllowSpontaneous;
 	desc.deviceLostCallbackInfo.callback = &GSDeviceWebGPU::DeviceLostCallback;
 	desc.deviceLostCallbackInfo.userdata1 = this;
 	desc.uncapturedErrorCallbackInfo.callback = &GSDeviceWebGPU::UncapturedErrorCallback;
 	desc.uncapturedErrorCallbackInfo.userdata1 = this;
+	return desc;
+}
 
-	WGPURequestDeviceCallbackInfo cbi = WGPU_REQUEST_DEVICE_CALLBACK_INFO_INIT;
-	cbi.mode = WGPUCallbackMode_WaitAnyOnly;
-	cbi.callback = &GSDeviceWebGPU::RequestDeviceCallback;
-	cbi.userdata1 = &m_device;
-
-	if (!WaitForFuture(wgpuAdapterRequestDevice(m_adapter, &desc, cbi)) || !m_device)
-	{
-		Host::ReportErrorAsync("Error", "Failed to create WebGPU device.");
-		return false;
-	}
-
+bool GSDeviceWebGPU::OnDeviceCreated()
+{
 	if (wgpuDeviceGetLimits(m_device, &m_limits) != WGPUStatus_Success)
-		m_limits = required_limits;
+		m_limits = m_required_limits;
 
 	m_queue = wgpuDeviceGetQueue(m_device);
 	if (!m_queue)
@@ -653,18 +709,159 @@ bool GSDeviceWebGPU::CreateDeviceAndSurface()
 	return true;
 }
 
+bool GSDeviceWebGPU::CreateDeviceAndSurface()
+{
+	if (!CreateInstanceAndSurface())
+		return false;
+
+	m_adapter = RequestAdapter(m_instance, m_surface);
+	if (!m_adapter)
+	{
+		Host::ReportErrorAsync("Error", "No WebGPU adapter available.");
+		return false;
+	}
+
+	if (!QueryAdapter())
+		return false;
+
+	const WGPUDeviceDescriptor desc = GetDeviceDescriptor();
+	WGPURequestDeviceCallbackInfo cbi = WGPU_REQUEST_DEVICE_CALLBACK_INFO_INIT;
+	cbi.mode = WGPUCallbackMode_WaitAnyOnly;
+	cbi.callback = &GSDeviceWebGPU::RequestDeviceCallback;
+	cbi.userdata1 = &m_device;
+
+	if (!WaitForFuture(wgpuAdapterRequestDevice(m_adapter, &desc, cbi)) || !m_device)
+	{
+		Host::ReportErrorAsync("Error", "Failed to create WebGPU device.");
+		return false;
+	}
+
+	return OnDeviceCreated();
+}
+
+#ifdef __EMSCRIPTEN__
+
+// Browser creation: instance and surface are synchronous, the adapter and device arrive through
+// promise callbacks on this thread's event loop, and the remaining resources are created from the
+// device callback. GS.cpp continues opening the renderer from the completion callback.
+
+bool GSDeviceWebGPU::BeginCreateAsync()
+{
+	if (!CreateInstanceAndSurface())
+		return false;
+
+	m_create_state = CreateState::Pending;
+	m_adapter_attempts = 0;
+	RequestAdapterAsync();
+	return true;
+}
+
+void GSDeviceWebGPU::RequestAdapterAsync()
+{
+	const WGPURequestAdapterOptions options = GetRequestAdapterOptions(m_surface);
+	WGPURequestAdapterCallbackInfo cbi = WGPU_REQUEST_ADAPTER_CALLBACK_INFO_INIT;
+	cbi.mode = WGPUCallbackMode_AllowSpontaneous;
+	cbi.callback = &GSDeviceWebGPU::RequestAdapterCallbackAsync;
+	cbi.userdata1 = this;
+	m_adapter_attempts++;
+	wgpuInstanceRequestAdapter(m_instance, &options, cbi);
+}
+
+void GSDeviceWebGPU::RequestAdapterCallbackAsync(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2)
+{
+	static constexpr u32 MAX_ADAPTER_ATTEMPTS = 4;
+	static constexpr double ADAPTER_RETRY_DELAY_MS = 250.0;
+
+	GSDeviceWebGPU* const dev = static_cast<GSDeviceWebGPU*>(userdata1);
+	if (status != WGPURequestAdapterStatus_Success)
+	{
+		const std::string_view msg = ToStringView(message);
+		Console.Error("WebGPU: RequestAdapter failed (%u): %.*s", static_cast<u32>(status), static_cast<int>(msg.size()), msg.data());
+		if (status == WGPURequestAdapterStatus_Unavailable && dev->m_adapter_attempts < MAX_ADAPTER_ATTEMPTS)
+		{
+			// The first requestAdapter() in a fresh headless Chrome context resolves to null
+			// ("A valid external Instance reference no longer exists"); the next one succeeds.
+			Console.Warning("WebGPU: Retrying adapter request (%u/%u)", dev->m_adapter_attempts + 1, MAX_ADAPTER_ATTEMPTS);
+			emscripten_set_timeout([](void* userdata) { static_cast<GSDeviceWebGPU*>(userdata)->RequestAdapterAsync(); }, ADAPTER_RETRY_DELAY_MS, dev);
+			return;
+		}
+
+		Host::ReportErrorAsync("Error", "No WebGPU adapter available.");
+		dev->CompleteCreate(false);
+		return;
+	}
+
+	dev->m_adapter = adapter;
+	dev->ContinueCreateWithAdapter();
+}
+
+void GSDeviceWebGPU::ContinueCreateWithAdapter()
+{
+	if (!QueryAdapter())
+	{
+		CompleteCreate(false);
+		return;
+	}
+
+	const WGPUDeviceDescriptor desc = GetDeviceDescriptor();
+	WGPURequestDeviceCallbackInfo cbi = WGPU_REQUEST_DEVICE_CALLBACK_INFO_INIT;
+	cbi.mode = WGPUCallbackMode_AllowSpontaneous;
+	cbi.callback = &GSDeviceWebGPU::RequestDeviceCallbackAsync;
+	cbi.userdata1 = this;
+	wgpuAdapterRequestDevice(m_adapter, &desc, cbi);
+}
+
+void GSDeviceWebGPU::RequestDeviceCallbackAsync(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2)
+{
+	GSDeviceWebGPU* const dev = static_cast<GSDeviceWebGPU*>(userdata1);
+	if (status != WGPURequestDeviceStatus_Success || !device)
+	{
+		const std::string_view msg = ToStringView(message);
+		Console.Error("WebGPU: RequestDevice failed (%u): %.*s", static_cast<u32>(status), static_cast<int>(msg.size()), msg.data());
+		Host::ReportErrorAsync("Error", "Failed to create WebGPU device.");
+		dev->CompleteCreate(false);
+		return;
+	}
+
+	dev->m_device = device;
+	dev->ContinueCreateWithDevice();
+}
+
+void GSDeviceWebGPU::ContinueCreateWithDevice()
+{
+	CompleteCreate(OnDeviceCreated() && CreateResources());
+}
+
+void GSDeviceWebGPU::CompleteCreate(bool success)
+{
+	m_create_state = success ? CreateState::Ready : CreateState::Failed;
+	if (m_create_complete_callback)
+	{
+		const CreateCompleteCallback callback = std::move(m_create_complete_callback);
+		m_create_complete_callback = {};
+		callback(success);
+	}
+}
+
+#endif
+
 bool GSDeviceWebGPU::CreateSurface()
 {
 	WGPUSurfaceDescriptor desc = WGPU_SURFACE_DESCRIPTOR_INIT;
 	desc.label = StringView("PCSX2 Surface");
 
+#ifdef __EMSCRIPTEN__
+	WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvas = WGPU_EMSCRIPTEN_SURFACE_SOURCE_CANVAS_HTML_SELECTOR_INIT;
+#else
 	WGPUSurfaceSourceXlibWindow xlib = WGPU_SURFACE_SOURCE_XLIB_WINDOW_INIT;
 	WGPUSurfaceSourceWaylandSurface wayland = WGPU_SURFACE_SOURCE_WAYLAND_SURFACE_INIT;
 	WGPUSurfaceSourceWindowsHWND hwnd = WGPU_SURFACE_SOURCE_WINDOWS_HWND_INIT;
 	WGPUSurfaceSourceMetalLayer metal = WGPU_SURFACE_SOURCE_METAL_LAYER_INIT;
+#endif
 
 	switch (m_window_info.type)
 	{
+#ifndef __EMSCRIPTEN__
 		case WindowInfo::Type::X11:
 			xlib.display = m_window_info.display_connection;
 			xlib.window = reinterpret_cast<uintptr_t>(m_window_info.window_handle);
@@ -686,6 +883,12 @@ bool GSDeviceWebGPU::CreateSurface()
 			metal.layer = m_window_info.surface_handle;
 			desc.nextInChain = &metal.chain;
 			break;
+#else
+		case WindowInfo::Type::WebCanvas:
+			canvas.selector = StringView(static_cast<const char*>(m_window_info.window_handle));
+			desc.nextInChain = &canvas.chain;
+			break;
+#endif
 
 		default:
 			Console.Error("WebGPU: Unsupported window type %u", static_cast<u32>(m_window_info.type));
@@ -1172,6 +1375,20 @@ WGPUShaderModule GSDeviceWebGPU::CreateShaderModule(const std::string& source, c
 		Console.Error("WebGPU: wgpuDeviceCreateShaderModule() failed for %s", label);
 		return nullptr;
 	}
+
+#ifdef __EMSCRIPTEN__
+	if (IsEventLoopDriven())
+	{
+		// The compilation info is a promise; errors are logged when it resolves, and a broken module
+		// surfaces as a pipeline validation error through the uncaptured error callback.
+		WGPUCompilationInfoCallbackInfo cbi = WGPU_COMPILATION_INFO_CALLBACK_INFO_INIT;
+		cbi.mode = WGPUCallbackMode_AllowSpontaneous;
+		cbi.callback = &GSDeviceWebGPU::CompilationInfoCallbackAsync;
+		cbi.userdata1 = new std::string(label);
+		wgpuShaderModuleGetCompilationInfo(mod, cbi);
+		return mod;
+	}
+#endif
 
 	bool has_error = false;
 	WGPUCompilationInfoCallbackInfo cbi = WGPU_COMPILATION_INFO_CALLBACK_INFO_INIT;
@@ -2135,6 +2352,7 @@ void GSDeviceWebGPU::EndPresent()
 	SubmitCommandBuffer();
 	MoveToNextCommandBuffer();
 
+#ifndef __EMSCRIPTEN__
 	if (m_surface)
 	{
 		const WGPUStatus status = wgpuSurfacePresent(m_surface);
@@ -2144,6 +2362,10 @@ void GSDeviceWebGPU::EndPresent()
 			m_resize_requested = true;
 		}
 	}
+#else
+	// emdawnwebgpu has no wgpuSurfacePresent(): the canvas shows the current texture once this
+	// thread returns to its event loop, which the MTGS web pump does after every iteration.
+#endif
 
 	m_surface_texture.reset();
 	InvalidateCachedState();

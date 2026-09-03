@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "GS.h"
+#include "GS/Renderers/Common/GSDevice.h"
 #include "Gif_Unit.h"
 #include "MTGS.h"
 #include "MTVU.h"
@@ -20,6 +21,8 @@
 
 #ifdef ARCH_WASM32
 #include <emscripten/eventloop.h>
+#include <emscripten/proxying.h>
+#include <emscripten/threading.h>
 #include <pthread.h>
 #endif
 
@@ -128,6 +131,14 @@ namespace MTGS
 	static bool s_web_pump_started = false;
 	static bool s_web_pump_open = false;
 	static bool s_web_pump_resume = false;
+	static bool s_web_open_pending = false;
+	static bool s_web_pump_resume_open = false;
+	static bool s_web_pump_draining = false;
+	static u64 s_web_pump_drain_deadline = 0;
+	static std::string s_web_canvas_selector;
+	// Readbacks still in flight when the GS closes get this long to land before the device goes.
+	static constexpr u64 WEB_PUMP_DRAIN_NS = 2000000000;
+	static void WebPumpClose();
 	static u64 s_web_pump_budget_ticks = WEB_PUMP_BUDGET_THREAD_NS;
 	static std::unique_lock<std::mutex> s_web_pump_mtvu_lock;
 #endif
@@ -160,11 +171,23 @@ void MTGS::StartThread()
 		s_shutdown_flag.store(false, std::memory_order_release);
 		s_web_pump_started = true;
 		s_web_pump_budget_ticks = (WEB_PUMP_BUDGET_MAIN_NS * GetTickFrequency()) / 1000000000ULL;
-		ThreadEntryPoint();
+
+		// The pump lives on the module's main thread event loop; WaitForOpen() is called from the
+		// CPU pthread, so the entry point is posted there rather than run here.
+		if (pthread_self() == emscripten_main_runtime_thread_id())
+		{
+			ThreadEntryPoint();
+		}
+		else
+		{
+			emscripten_proxy_async(emscripten_proxy_get_system_queue(), emscripten_main_runtime_thread_id(),
+				[](void*) { ThreadEntryPoint(); }, nullptr);
+		}
 		return;
 	}
 
 	s_web_pump_budget_ticks = (WEB_PUMP_BUDGET_THREAD_NS * GetTickFrequency()) / 1000000000ULL;
+	s_thread.SetTransferredCanvases(s_web_canvas_selector);
 #endif
 
 	if (s_thread.Joinable())
@@ -208,7 +231,10 @@ void MTGS::ShutdownThread()
 
 void MTGS::ThreadEntryPoint()
 {
-	Threading::SetNameOfCurrentThread("GS");
+#ifdef ARCH_WASM32
+	if (!s_web_pump_main_thread)
+#endif
+		Threading::SetNameOfCurrentThread("GS");
 
 	// GS can hit SMC write traps when executing InitAndReadFIFO
 	// As racey as it sounds, it should be safe, since InitAndReadFIFO is requested and immediately waited for,
@@ -710,6 +736,22 @@ bool MTGS::IsWebPumpOnMainThread()
 	return s_web_pump_main_thread;
 }
 
+void MTGS::SetWebCanvasSelector(std::string selector)
+{
+	pxAssertRel(!s_web_pump_started && !s_thread.Joinable(), "GS canvas can only change while stopped");
+	s_web_canvas_selector = std::move(selector);
+}
+
+void MTGS::WebOpenComplete(bool opened)
+{
+	pxAssertRel(s_web_open_pending, "GS open was pending");
+	s_web_open_pending = false;
+	s_web_pump_resume_open = opened;
+	s_open_flag.store(opened, std::memory_order_release);
+	s_open_or_close_done.Post();
+	emscripten_set_timeout(&MTGS::WebPumpRun, 0, nullptr);
+}
+
 void MTGS::WebPumpOnWork(void* userdata)
 {
 	s_web_pump_mtvu_lock.lock();
@@ -717,12 +759,51 @@ void MTGS::WebPumpOnWork(void* userdata)
 	WebPumpRun(userdata);
 }
 
+void MTGS::WebPumpClose()
+{
+	// Unblock any threads in WaitGS in case MTGS gets cancelled while still processing work
+	s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_relaxed);
+	s_sem_event.Kill();
+	s_web_pump_mtvu_lock.unlock();
+	s_web_pump_mtvu_lock.release();
+	s_web_pump_open = false;
+
+	// when we come back here, it's because we closed (or shutdown)
+	// that means the emu thread should be blocked, waiting for us to be done
+	pxAssertRel(!s_open_flag.load(std::memory_order_relaxed), "Open flag is clear on close");
+	GSclose();
+	s_open_or_close_done.Post();
+
+	// we need to reset sem_event here, because MainLoopIteration() kills it.
+	s_sem_event.Reset();
+}
+
 void MTGS::WebPumpRun(void* userdata)
 {
 	for (;;)
 	{
+		if (s_web_pump_draining)
+		{
+			// Closed with readbacks in flight: keep turning the event loop until they complete.
+			if (g_gs_device && g_gs_device->HasPendingAsyncWork() && GetCPUTicks() < s_web_pump_drain_deadline)
+			{
+				emscripten_set_timeout(&MTGS::WebPumpRun, 1, nullptr);
+				return;
+			}
+
+			s_web_pump_draining = false;
+			WebPumpClose();
+			continue;
+		}
+
 		if (!s_web_pump_open)
 		{
+			if (s_web_open_pending)
+			{
+				// GSopen() is waiting for the WebGPU device; WebOpenComplete() reschedules us.
+				return;
+			}
+
 			// wait until we're actually asked to initialize (and config has been loaded, etc)
 			if (!s_open_flag.load(std::memory_order_acquire))
 			{
@@ -742,19 +823,35 @@ void MTGS::WebPumpRun(void* userdata)
 			}
 
 			// try initializing.. this could fail
-			std::memcpy(RingBuffer.Regs, PS2MEM_GS, sizeof(PS2MEM_GS));
-			const bool opened = GSopen(EmuConfig.GS, EmuConfig.GS.Renderer, RingBuffer.Regs,
-				VMManager::GetEffectiveVSyncMode(), VMManager::ShouldAllowPresentThrottle());
-			s_open_flag.store(opened, std::memory_order_release);
-
-			// notify emu thread that we finished opening (or failed)
-			s_open_or_close_done.Post();
-
-			// are we open?
-			if (!opened)
+			if (!s_web_pump_resume_open)
 			{
-				// wait until we're asked to try again...
-				continue;
+				std::memcpy(RingBuffer.Regs, PS2MEM_GS, sizeof(PS2MEM_GS));
+				const bool opened = GSopen(EmuConfig.GS, EmuConfig.GS.Renderer, RingBuffer.Regs,
+					VMManager::GetEffectiveVSyncMode(), VMManager::ShouldAllowPresentThrottle());
+				if (opened && GSIsOpenPending())
+				{
+					// The device is created on this event loop; WebOpenComplete() finishes the open.
+					s_web_open_pending = true;
+					s_web_pump_resume_open = true;
+					return;
+				}
+
+				s_open_flag.store(opened, std::memory_order_release);
+
+				// notify emu thread that we finished opening (or failed)
+				s_open_or_close_done.Post();
+
+				// are we open?
+				if (!opened)
+				{
+					// wait until we're asked to try again...
+					continue;
+				}
+			}
+			else
+			{
+				// Resumed by WebOpenComplete() with the open flag already published.
+				s_web_pump_resume_open = false;
 			}
 
 			s_web_pump_mtvu_lock = std::unique_lock<std::mutex>(s_mtx_RingBufferBusy2);
@@ -787,21 +884,15 @@ void MTGS::WebPumpRun(void* userdata)
 		const IterationResult result = MainLoopIteration(s_web_pump_mtvu_lock, GetCPUTicks() + s_web_pump_budget_ticks);
 		if (result == IterationResult::Closed)
 		{
-			// Unblock any threads in WaitGS in case MTGS gets cancelled while still processing work
-			s_ReadPos.store(s_WritePos.load(std::memory_order_acquire), std::memory_order_relaxed);
-			s_sem_event.Kill();
-			s_web_pump_mtvu_lock.unlock();
-			s_web_pump_mtvu_lock.release();
-			s_web_pump_open = false;
+			if (g_gs_device && g_gs_device->HasPendingAsyncWork())
+			{
+				s_web_pump_draining = true;
+				s_web_pump_drain_deadline = GetCPUTicks() + (WEB_PUMP_DRAIN_NS * GetTickFrequency()) / 1000000000ULL;
+				emscripten_set_timeout(&MTGS::WebPumpRun, 1, nullptr);
+				return;
+			}
 
-			// when we come back here, it's because we closed (or shutdown)
-			// that means the emu thread should be blocked, waiting for us to be done
-			pxAssertRel(!s_open_flag.load(std::memory_order_relaxed), "Open flag is clear on close");
-			GSclose();
-			s_open_or_close_done.Post();
-
-			// we need to reset sem_event here, because MainLoopIteration() kills it.
-			s_sem_event.Reset();
+			WebPumpClose();
 			continue;
 		}
 

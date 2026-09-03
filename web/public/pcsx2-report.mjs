@@ -33,24 +33,45 @@ export const RENDERERS = Object.freeze({
   vk: 14,
   dx12: 15,
   metal: 17,
+  webgpu: 18,
 });
 
 /**
  * The EmuCore/GS/Renderer value for a run: render=false selects the null
- * renderer, otherwise the named renderer (default the software renderer). A
- * numeric string or number is passed through for renderers this table does
- * not name yet.
+ * renderer, render=true the WebGPU hardware renderer, and a named renderer
+ * wins over both (the software renderer when nothing is named). A numeric
+ * string or number is passed through for renderers this table does not name
+ * yet.
  * @param {{ render?: boolean, renderer?: string | number }} options
  */
 export function rendererId(options = {}) {
   if (options.render === false) return RENDERERS.null;
   const renderer = options.renderer;
-  if (renderer === undefined || renderer === null || renderer === "") return RENDERERS.sw;
+  if (renderer === undefined || renderer === null || renderer === "") return options.render === true ? RENDERERS.webgpu : RENDERERS.sw;
   if (typeof renderer === "number") return renderer;
   if (/^-?\d+$/.test(renderer)) return Number(renderer);
   const id = RENDERERS[/** @type {keyof typeof RENDERERS} */ (renderer.toLowerCase())];
   if (id === undefined) throw new Error(`unknown renderer "${renderer}"`);
   return id;
+}
+
+/** GS dump targets replay through GSDumpReplayer and need no BIOS. */
+export function isGsDumpTarget(target) {
+  return /\.gs(\.xz|\.zst)?$/i.test(String(target));
+}
+
+/**
+ * Turns bytes into base64 without building one giant binary string per call
+ * (frames are a few MB; btoa on chunks keeps the argument size bounded).
+ * @param {Uint8Array} bytes
+ */
+export function bytesToBase64(bytes) {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+    binary += String.fromCharCode.apply(null, /** @type {number[]} */ (/** @type {unknown} */ (bytes.subarray(offset, offset + CHUNK))));
+  }
+  return btoa(binary);
 }
 
 /**
@@ -126,7 +147,8 @@ export class TtyDecoder {
  * @property {string} [detail]
  * @property {number} [bootResult]
  * @property {number} [moduleCreateMs]
- * @property {Array<{ index: number, elapsedMs: number }>} [frames]
+ * @property {Array<Record<string, unknown>>} [frames]
+ * @property {Record<string, unknown>} [gpu]
  * @property {unknown[]} [events]
  * @property {Record<string, number>} [workingSet]
  * @property {{ stoppedCleanly: boolean, stopMs?: number, detail?: string, workingSet?: Record<string, number> }} [shutdown]
@@ -148,6 +170,7 @@ export function createRunReport(fields) {
     bootResult: fields.bootResult,
     moduleCreateMs: fields.moduleCreateMs,
     frames: fields.frames ?? [],
+    gpu: fields.gpu,
     events: fields.events ?? [],
     workingSet: fields.workingSet,
     shutdown: fields.shutdown,

@@ -39,7 +39,10 @@
 #include "pcsx2/CDVD/CDVD.h"
 #include "pcsx2/Counters.h"
 #include "pcsx2/GS.h"
+#include "pcsx2/GS/GSXXH.h"
 #include "pcsx2/GS/Renderers/Common/GSDevice.h"
+#include "pcsx2/GS/Renderers/Common/GSRenderer.h"
+#include "pcsx2/GSDumpReplayer.h"
 #include "pcsx2/GameList.h"
 #include "pcsx2/Host.h"
 #include "pcsx2/Host/AudioStream.h"
@@ -139,6 +142,54 @@ namespace WebHost
 
 	static PadBytes PadBytesFromState(u32 buttons, u32 lx, u32 ly, u32 rx, u32 ry, const u8* pressures);
 	static void ApplyPadOnCPUThread();
+
+	// GS presentation: the canvas the page transferred (empty = surfaceless), set before boot.
+	static std::string s_canvas_selector;
+	static u32 s_canvas_width = 640;
+	static u32 s_canvas_height = 480;
+
+	// Readback mode: 0 = none (no readbacks at all), 1 = async (frame captures through the GS
+	// thread's event loop). Synchronous readbacks need the PCSX2_WEB_SYNC_READBACK=asyncify build.
+	static std::atomic<int> s_readback_mode{0};
+
+	// Frame capture: every Nth presented frame (0 = off) and the listed oracle frame numbers are read
+	// back and queued for pcsx2_web_frame_read. GS dumps loop this many times, like pcsx2-gsrunner -loop.
+	static std::atomic<u32> s_frame_capture_every{0};
+	static std::vector<u32> s_frame_capture_list;
+	static std::atomic<int> s_dump_loop_count{1};
+
+	struct CapturedFrame
+	{
+		u32 frame;
+		u32 width;
+		u32 height;
+		u32 dump_frame;
+		s32 dump_loop;
+		u32 oracle_frame;
+		u64 render_ns;
+		u32 changed_pixels;
+		u64 hash;
+		std::vector<u32> pixels;
+	};
+	static constexpr size_t MAX_QUEUED_FRAMES = 64;
+	static std::mutex s_frame_mutex;
+	static std::deque<CapturedFrame> s_frames;
+
+	// GS thread state: previous capture for the changed pixel count, present timing, and the dump
+	// replayer's position as pcsx2-gsrunner mirrors it (posted from the CPU thread at every vsync).
+	static std::vector<u32> s_last_capture;
+	static u32 s_last_capture_width = 0;
+	static u32 s_last_capture_height = 0;
+	static u64 s_last_present_ticks = 0;
+	static u32 s_dump_frame_number = 0;
+	static s32 s_dump_loop_number = 0;
+	// g_FrameCount + 1 as pcsx2-tracerunner mirrors it to its GS thread, the number its PNGs carry.
+	static u32 s_oracle_frame_number = 0;
+
+	static std::mutex s_gpu_info_mutex;
+	static std::string s_gpu_driver_info;
+
+	static void CaptureCompleted(u32 frame, u32 dump_frame, s32 dump_loop, u32 oracle_frame, u64 render_ns, u32 width, u32 height, std::vector<u32> pixels);
 } // namespace WebHost
 
 WebHost::PadBytes WebHost::PadBytesFromState(u32 buttons, u32 lx, u32 ly, u32 rx, u32 ry, const u8* pressures)
@@ -290,6 +341,12 @@ void WebHost::SettingsOverride()
 	s_settings_interface.SetStringValue("SPU2/Output", "Backend", "WebAudio");
 	s_settings_interface.SetStringValue("SPU2/Output", "SyncMode", "Disabled");
 
+#ifndef PCSX2_WEB_SYNC_READBACK
+	// GSDownloadTexture::Map() cannot block on the GS thread's event loop, so the texture cache and
+	// GS local memory reads never wait on the GPU; frame captures use the asynchronous map instead.
+	s_settings_interface.SetIntValue("EmuCore/GS", "HWDownloadMode", static_cast<int>(GSHardwareDownloadMode::NoReadbacks));
+#endif
+
 	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
 	s_settings_interface.SetBoolValue("EmuCore", "EnableDiscordPresence", false);
 	s_settings_interface.SetBoolValue("Achievements", "Enabled", false);
@@ -353,11 +410,16 @@ void WebHost::CPUThreadMain()
 			continue;
 
 		s_boot_failed.store(false, std::memory_order_release);
+		const bool is_dump = VMManager::IsGSDumpFileName(boot->filename);
+		GSDumpReplayer::SetIsDumpRunner(is_dump);
 		if (VMManager::Initialize(boot.value()) != VMBootResult::StartupSuccess)
 		{
 			s_boot_failed.store(true, std::memory_order_release);
 			continue;
 		}
+
+		if (is_dump)
+			GSDumpReplayer::SetLoopCount(s_dump_loop_count.load(std::memory_order_acquire));
 
 		VMManager::SetState(VMState::Running);
 		while (VMManager::GetState() == VMState::Running || VMManager::GetState() == VMState::Paused)
@@ -652,6 +714,131 @@ EMSCRIPTEN_KEEPALIVE const void* pcsx2_web_audio_stats_address()
 	return WebAudio::StatsAddress();
 }
 
+// The canvas the GS presents to, as a CSS selector the page registered with the module's
+// GL.offscreenCanvases table (its OffscreenCanvas is transferred to the GS pthread when it starts,
+// or used in place when the pump runs on the main thread). An empty selector renders surfaceless.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_canvas(const char* selector, int width, int height)
+{
+	if (MTGS::IsOpen() || width < 0 || height < 0)
+		return 1;
+
+	WebHost::s_canvas_selector = selector ? selector : "";
+	WebHost::s_canvas_width = static_cast<u32>(width);
+	WebHost::s_canvas_height = static_cast<u32>(height);
+	MTGS::SetWebCanvasSelector(MTGS::IsWebPumpOnMainThread() ? std::string() : WebHost::s_canvas_selector);
+	return 0;
+}
+
+// 0: the GS runs on its own pthread (the default), 1: the GS pump runs on the module's main thread
+// event loop. Must be set before the first boot.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_gs_host(int main_thread)
+{
+	if (MTGS::IsOpen())
+		return 1;
+
+	MTGS::SetWebPumpOnMainThread(main_thread != 0);
+	MTGS::SetWebCanvasSelector(main_thread ? std::string() : WebHost::s_canvas_selector);
+	return 0;
+}
+
+// 0: none, 1: async (frame captures are delivered through pcsx2_web_frame_read).
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_readback_mode(int mode)
+{
+	if (mode < 0 || mode > 1)
+		return 1;
+
+	WebHost::s_readback_mode.store(mode, std::memory_order_release);
+	return 0;
+}
+
+// Reads back every Nth presented frame (0 disables) when the readback mode is async.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_frame_capture(int every)
+{
+	if (every < 0)
+		return 1;
+
+	WebHost::s_frame_capture_every.store(static_cast<u32>(every), std::memory_order_release);
+	return 0;
+}
+
+// Also reads back the frame whose oracle number (g_FrameCount + 1 at the vsync, the number in the
+// tracerunner's frames/frameNNNNN.png) equals frame. Set before boot.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_add_capture_frame(int frame)
+{
+	if (frame < 0 || VMManager::HasValidVM())
+		return 1;
+
+	WebHost::s_frame_capture_list.push_back(static_cast<u32>(frame));
+	return 0;
+}
+
+// Number of times a GS dump is played (pcsx2-gsrunner -loop); 0 loops forever.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_dump_loop_count(int loops)
+{
+	if (loops < 0)
+		return 1;
+
+	WebHost::s_dump_loop_count.store(loops, std::memory_order_release);
+	return 0;
+}
+
+// Size in bytes of the RGBA pixels of the oldest captured frame, 0 when none is queued.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_frame_ready()
+{
+	std::lock_guard lock(WebHost::s_frame_mutex);
+	if (WebHost::s_frames.empty())
+		return 0;
+
+	return static_cast<int>(WebHost::s_frames.front().pixels.size() * sizeof(u32));
+}
+
+// Pops the oldest captured frame. header receives, in order: frame index, width, height, dump frame
+// number, dump loop number, oracle frame number, render time in microseconds, pixels changed since
+// the previous capture, XXH3 hash low word, XXH3 hash high word. Returns the RGBA bytes copied, 0
+// when no frame is queued, -1 when the buffers are too small (the frame stays queued).
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_frame_read(u32* header, int header_words, u8* rgba, int rgba_capacity)
+{
+	static constexpr int HEADER_WORDS = 10;
+	if (!header || header_words < HEADER_WORDS || !rgba)
+		return -1;
+
+	std::lock_guard lock(WebHost::s_frame_mutex);
+	if (WebHost::s_frames.empty())
+		return 0;
+
+	WebHost::CapturedFrame& cf = WebHost::s_frames.front();
+	const size_t bytes = cf.pixels.size() * sizeof(u32);
+	if (bytes > static_cast<size_t>(rgba_capacity))
+		return -1;
+
+	header[0] = cf.frame;
+	header[1] = cf.width;
+	header[2] = cf.height;
+	header[3] = cf.dump_frame;
+	header[4] = static_cast<u32>(cf.dump_loop);
+	header[5] = cf.oracle_frame;
+	header[6] = static_cast<u32>(cf.render_ns / 1000);
+	header[7] = cf.changed_pixels;
+	header[8] = static_cast<u32>(cf.hash);
+	header[9] = static_cast<u32>(cf.hash >> 32);
+	std::memcpy(rgba, cf.pixels.data(), bytes);
+	WebHost::s_frames.pop_front();
+	return static_cast<int>(bytes);
+}
+
+// GSDevice::GetDriverInfo() of the open device (adapter name and backend), empty before the first present.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_gs_driver_info(char* buffer, int buffer_size)
+{
+	std::lock_guard lock(WebHost::s_gpu_info_mutex);
+	if (!buffer || buffer_size <= 0)
+		return static_cast<int>(WebHost::s_gpu_driver_info.size());
+
+	const int count = static_cast<int>(std::min<size_t>(WebHost::s_gpu_driver_info.size(), static_cast<size_t>(buffer_size - 1)));
+	std::memcpy(buffer, WebHost::s_gpu_driver_info.data(), count);
+	buffer[count] = 0;
+	return count;
+}
+
 } // extern "C"
 
 //////////////////////////////////////////////////////////////////////////
@@ -755,16 +942,79 @@ void Host::SetMouseLock(bool state)
 
 std::optional<WindowInfo> Host::AcquireRenderWindow(bool recreate_window)
 {
-	return GetTopLevelWindowInfo();
+	if (WebHost::s_canvas_selector.empty())
+		return GetTopLevelWindowInfo();
+
+	WindowInfo wi;
+	wi.type = WindowInfo::Type::WebCanvas;
+	wi.window_handle = const_cast<char*>(WebHost::s_canvas_selector.c_str());
+	wi.surface_width = WebHost::s_canvas_width;
+	wi.surface_height = WebHost::s_canvas_height;
+	wi.surface_scale = 1.0f;
+	return wi;
 }
 
 void Host::ReleaseRenderWindow()
 {
 }
 
+void WebHost::CaptureCompleted(u32 frame, u32 dump_frame, s32 dump_loop, u32 oracle_frame, u64 render_ns, u32 width, u32 height, std::vector<u32> pixels)
+{
+	// GS thread (event loop). An empty image records a failed readback.
+	u32 changed = width * height;
+	if (!pixels.empty() && width == s_last_capture_width && height == s_last_capture_height)
+	{
+		changed = 0;
+		for (size_t i = 0; i < pixels.size(); i++)
+			changed += (pixels[i] != s_last_capture[i]);
+	}
+	if (!pixels.empty())
+	{
+		s_last_capture = pixels;
+		s_last_capture_width = width;
+		s_last_capture_height = height;
+	}
+
+	const u64 hash = pixels.empty() ? 0 : GSXXH3_64bits(pixels.data(), pixels.size() * sizeof(u32));
+
+	std::lock_guard lock(s_frame_mutex);
+	if (s_frames.size() >= MAX_QUEUED_FRAMES)
+		s_frames.pop_front();
+	s_frames.push_back(CapturedFrame{frame, width, height, dump_frame, dump_loop, oracle_frame, render_ns, changed, hash, std::move(pixels)});
+}
+
 void Host::BeginPresentFrame()
 {
-	WebHost::s_frame_count.fetch_add(1, std::memory_order_release);
+	const u32 frame = WebHost::s_frame_count.fetch_add(1, std::memory_order_release);
+
+	const u64 now = GetCPUTicks();
+	const u64 render_ns = (WebHost::s_last_present_ticks != 0) ? (now - WebHost::s_last_present_ticks) : 0;
+	WebHost::s_last_present_ticks = now;
+
+	if (frame == 0 && g_gs_device)
+	{
+		std::lock_guard lock(WebHost::s_gpu_info_mutex);
+		WebHost::s_gpu_driver_info = g_gs_device->GetDriverInfo();
+	}
+
+	const u32 oracle_frame = WebHost::s_oracle_frame_number;
+	const u32 every = WebHost::s_frame_capture_every.load(std::memory_order_acquire);
+	const bool listed = std::find(WebHost::s_frame_capture_list.begin(), WebHost::s_frame_capture_list.end(), oracle_frame) != WebHost::s_frame_capture_list.end();
+	if ((every == 0 || (frame % every) != 0) && !listed)
+		return;
+	if (WebHost::s_readback_mode.load(std::memory_order_acquire) != 1)
+		return;
+	if (!g_gs_renderer || !GSIsHardwareRenderer() || !g_gs_device->GetCurrent())
+		return;
+
+	// Internal resolution, aspect corrected and cropped: what a surfaceless pcsx2-gsrunner or
+	// tracerunner writes for its PNGs, so the pixels compare against them.
+	const u32 dump_frame = WebHost::s_dump_frame_number;
+	const s32 dump_loop = WebHost::s_dump_loop_number;
+	g_gs_renderer->SaveSnapshotToMemoryAsync(0, 0, true, true,
+		[frame, dump_frame, dump_loop, oracle_frame, render_ns](u32 width, u32 height, std::vector<u32> pixels) {
+			WebHost::CaptureCompleted(frame, dump_frame, dump_loop, oracle_frame, render_ns, width, height, std::move(pixels));
+		});
 }
 
 void Host::RequestResizeHostDisplay(s32 width, s32 height)
@@ -955,6 +1205,22 @@ void Host::PumpMessagesOnCPUThread()
 {
 	WebHost::ProcessCPUThreadTasks();
 	WebHost::ApplyPadOnCPUThread();
+
+	// Update the GS thread's copies of the frame numbers the native runners post the same way, so
+	// the captured frames carry the numbers their PNGs are named with: pcsx2-gsrunner's dump
+	// position, pcsx2-tracerunner's g_FrameCount + 1.
+	if (!MTGS::IsOpen())
+		return;
+
+	if (GSDumpReplayer::IsReplayingDump())
+	{
+		MTGS::RunOnGSThread([frame_number = GSDumpReplayer::GetFrameNumber()]() { WebHost::s_dump_frame_number = frame_number; });
+		MTGS::RunOnGSThread([loop_number = GSDumpReplayer::GetLoopCount()]() { WebHost::s_dump_loop_number = loop_number; });
+	}
+	else
+	{
+		MTGS::RunOnGSThread([frame_number = g_FrameCount + 1]() { WebHost::s_oracle_frame_number = frame_number; });
+	}
 }
 
 s32 Host::Internal::GetTranslatedStringImpl(

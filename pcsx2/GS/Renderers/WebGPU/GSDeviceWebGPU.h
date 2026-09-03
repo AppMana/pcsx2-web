@@ -127,6 +127,9 @@ public:
 
 	__fi u64 GetCurrentFenceCounter() const { return m_current_fence_counter; }
 	__fi u64 GetCompletedFenceCounter() const { return m_completed_fence_counter; }
+	/// True when the instance cannot block in wgpuInstanceWaitAny() (emdawnwebgpu without Asyncify):
+	/// futures complete from the thread's event loop, so readbacks and device creation are callback driven.
+	__fi bool IsEventLoopDriven() const { return !m_timed_wait_any; }
 	void WaitForFenceCounter(u64 fence_counter);
 	void WaitForGPUIdle();
 	bool WaitForFuture(WGPUFuture future);
@@ -154,6 +157,9 @@ public:
 
 	bool Create(GSVSyncMode vsync_mode, bool allow_present_throttle) override;
 	void Destroy() override;
+	bool IsCreatePending() const override;
+	bool HasPendingAsyncWork() const override { return (m_pending_async_maps > 0); }
+	__fi void AddPendingAsyncMap(s32 delta) { m_pending_async_maps += delta; }
 
 	bool UpdateWindow() override;
 	void ResizeWindow(u32 new_window_width, u32 new_window_height, float new_window_scale) override;
@@ -308,9 +314,33 @@ private:
 	static void CompilationInfoCallback(WGPUCompilationInfoRequestStatus status, WGPUCompilationInfo const* info, void* userdata1, void* userdata2);
 
 	static WGPUInstance CreateWGPUInstance();
+	static WGPURequestAdapterOptions GetRequestAdapterOptions(WGPUSurface surface);
 	static WGPUAdapter RequestAdapter(WGPUInstance instance, WGPUSurface surface);
 
 	bool CreateDeviceAndSurface();
+	bool CreateInstanceAndSurface();
+	bool QueryAdapter();
+	WGPUDeviceDescriptor GetDeviceDescriptor();
+	bool OnDeviceCreated();
+	bool CreateResources();
+#ifdef __EMSCRIPTEN__
+	enum class CreateState : u8
+	{
+		None,
+		Pending,
+		Ready,
+		Failed,
+	};
+
+	static void RequestAdapterCallbackAsync(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2);
+	static void RequestDeviceCallbackAsync(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2);
+	static void CompilationInfoCallbackAsync(WGPUCompilationInfoRequestStatus status, WGPUCompilationInfo const* info, void* userdata1, void* userdata2);
+	bool BeginCreateAsync();
+	void RequestAdapterAsync();
+	void ContinueCreateWithAdapter();
+	void ContinueCreateWithDevice();
+	void CompleteCreate(bool success);
+#endif
 	bool CreateSurface();
 	bool ConfigureSurface();
 	bool CheckFeatures();
@@ -431,6 +461,13 @@ private:
 
 	DeviceFeatures m_device_features = {};
 	WGPULimits m_limits = WGPU_LIMITS_INIT;
+	WGPULimits m_required_limits = WGPU_LIMITS_INIT;
+	std::vector<WGPUFeatureName> m_required_features;
+	s32 m_pending_async_maps = 0;
+#ifdef __EMSCRIPTEN__
+	CreateState m_create_state = CreateState::None;
+	u32 m_adapter_attempts = 0;
+#endif
 	std::string m_adapter_name;
 	std::string m_adapter_description;
 	WGPUBackendType m_backend_type = WGPUBackendType_Undefined;
