@@ -3,6 +3,9 @@
 
 #include "common/emitter/legacy_internal.h"
 
+namespace x86Emitter
+{
+
 //------------------------------------------------------------------
 // FPU instructions
 //------------------------------------------------------------------
@@ -58,3 +61,4 @@ emitterT void FMUL32(u32 from)
 	ModRM(0, 0x1, DISP32);
 	xWrite32(MEMADDR(from, 4));
 }
+} // namespace x86Emitter

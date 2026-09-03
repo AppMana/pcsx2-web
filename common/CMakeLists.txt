@@ -85,19 +85,29 @@ target_sources(common PRIVATE
 	YAML.h
 )
 
-if(ARCH_X86)
-	target_sources(common PRIVATE
-		emitter/bmi.cpp
-		emitter/fpu.cpp
-		emitter/groups.cpp
-		emitter/jmp.cpp
-		emitter/legacy.cpp
-		emitter/legacy_sse.cpp
-		emitter/movs.cpp
-		emitter/simd.cpp
-		emitter/x86emitter.cpp
-	)
+# The emitter API (common/emitter) has two backends sharing the register/operand types and the
+# instruction tables: the x86 encoder on x86 hosts and the wasm lowering on wasm32.
+set(emitter_common_sources
+	emitter/tables.cpp
+	emitter/x86types.cpp
+)
+set(emitter_x86_sources
+	emitter/bmi.cpp
+	emitter/fpu.cpp
+	emitter/groups.cpp
+	emitter/jmp.cpp
+	emitter/legacy.cpp
+	emitter/legacy_sse.cpp
+	emitter/movs.cpp
+	emitter/simd.cpp
+	emitter/x86emitter.cpp
+)
 
+if(ARCH_X86)
+	target_sources(common PRIVATE ${emitter_common_sources} ${emitter_x86_sources})
+endif()
+
+if(ARCH_X86 OR ARCH_WASM32)
 	target_sources(common PRIVATE
 		emitter/implement/dwshift.h
 		emitter/implement/group1.h

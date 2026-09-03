@@ -3,7 +3,8 @@
 
 #include "common/emitter/legacy_internal.h"
 
-using namespace x86Emitter;
+namespace x86Emitter
+{
 
 // ------------------------------------------------------------------------
 //                         Begin SSE-Only Part!
@@ -18,3 +19,4 @@ DEFINE_LEGACY_SSSD_OPCODE(ADD)
 
 DEFINE_LEGACY_SSSD_OPCODE(MIN)
 DEFINE_LEGACY_SSSD_OPCODE(MAX)
+} // namespace x86Emitter

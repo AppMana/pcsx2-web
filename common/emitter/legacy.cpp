@@ -40,7 +40,8 @@ emitterT void SibSB(uint ss, uint index, uint base)
 	xWrite8((ss << 6) | (index << 3) | base);
 }
 
-using namespace x86Emitter;
+namespace x86Emitter
+{
 
 //////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -401,3 +402,4 @@ emitterT u32* JNO32(u32 to)
 {
 	return J32Rel(0x81, to);
 }
+} // namespace x86Emitter

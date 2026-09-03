@@ -17,13 +17,40 @@ enum XMMSSEType
 	//XMMT_FPD = 3, // double
 };
 
-extern thread_local u8* x86Ptr;
-extern thread_local XMMSSEType g_xmmtypes[iREGCNT_XMM];
+// The wasm backend (common/emitter/wasm) implements this same API by lowering the operations to
+// WebAssembly. It is the backend for ARCH_WASM32 builds, and the differential test harness builds
+// it natively as well, with the namespace renamed to wasmEmitter through the compiler command line.
+#if defined(ARCH_WASM32) && !defined(X86EMITTER_WASM_BACKEND)
+#define X86EMITTER_WASM_BACKEND 1
+#endif
 
 namespace x86Emitter
 {
+	extern thread_local XMMSSEType g_xmmtypes[iREGCNT_XMM];
+
+#ifdef X86EMITTER_WASM_BACKEND
+	extern void xSetPtr(void* ptr);
+	extern u8* xGetPtr();
+
+	// Code pointers are function table indices, and reading the emitter position splits the current
+	// function, so the raw pointer of the x86 backend is replaced by a proxy that forwards to
+	// xGetPtr/xSetPtr.
+	struct xCodePtrProxy
+	{
+		operator u8*() const { return xGetPtr(); }
+		xCodePtrProxy& operator=(u8* ptr)
+		{
+			xSetPtr(ptr);
+			return *this;
+		}
+	};
+	extern thread_local xCodePtrProxy x86Ptr;
+#else
+	extern thread_local u8* x86Ptr;
+#endif
+
 	// Win32 requires 32 bytes of shadow stack in the caller's frame.
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(X86EMITTER_WASM_BACKEND)
 	static constexpr int SHADOW_STACK_SIZE = 32;
 #else
 	static constexpr int SHADOW_STACK_SIZE = 0;
@@ -32,10 +59,12 @@ namespace x86Emitter
 	/// This will switch all SSE instructions to generate AVX instructions instead
 	extern bool use_avx;
 
+#ifndef X86EMITTER_WASM_BACKEND
 	extern void xWrite8(u8 val);
 	extern void xWrite16(u16 val);
 	extern void xWrite32(u32 val);
 	extern void xWrite64(u64 val);
+#endif
 
 	extern const char* xGetRegName(int regid, int operandSize);
 
@@ -168,13 +197,18 @@ namespace x86Emitter
 			return _operandSize;
 		}
 
+		// The operand size as declared, 0 for objects that take theirs from the other operand.
+		uint GetRawOperandSize() const { return _operandSize; }
+
 		bool Is8BitOp() const { return GetOperandSize() == 1; }
 		u8 GetPrefix16() const { return GetOperandSize() == 2 ? 0x66 : 0; }
+#ifndef X86EMITTER_WASM_BACKEND
 		void prefix16() const
 		{
 			if (GetOperandSize() == 2)
 				xWrite8(0x66);
 		}
+#endif
 
 		int GetImmSize() const
 		{
@@ -193,6 +227,7 @@ namespace x86Emitter
 			return 0;
 		}
 
+#ifndef X86EMITTER_WASM_BACKEND
 		void xWriteImm(int imm) const
 		{
 			switch (GetImmSize())
@@ -210,6 +245,7 @@ namespace x86Emitter
 					jNO_DEFAULT
 			}
 		}
+#endif
 	};
 
 	// Represents an unused or "empty" register assignment.  If encountered by the emitter, this
@@ -925,7 +961,7 @@ static constexpr const xAddressReg& RTEXTPTR = rbx;
 	typedef xIndirect<u32> xIndirect32;
 	typedef xIndirect<u16> xIndirect16;
 	typedef xIndirect<u8> xIndirect8;
-	typedef xIndirect<u64> xIndirectNative;
+	typedef xIndirect<uptr> xIndirectNative;
 
 	// --------------------------------------------------------------------------------------
 	//  xIndirect64orLess  -  base class 64, 32, 16, and 8 bit operand types

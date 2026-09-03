@@ -92,16 +92,6 @@ namespace x86Emitter
 		}
 	}
 
-	const xImpl_G1Logic xAND = {{G1Type_AND}, {SIMDInstructionInfo(0x54).commutative()}, {SIMDInstructionInfo(0x54).commutative().p66()}};
-	const xImpl_G1Logic xOR  = {{G1Type_OR},  {SIMDInstructionInfo(0x56).commutative()}, {SIMDInstructionInfo(0x56).commutative().p66()}};
-	const xImpl_G1Logic xXOR = {{G1Type_XOR}, {SIMDInstructionInfo(0x57).commutative()}, {SIMDInstructionInfo(0x57).commutative().p66()}};
-
-	const xImpl_G1Arith xADD = {{G1Type_ADD}, {SIMDInstructionInfo(0x58).commutative()}, {SIMDInstructionInfo(0x58).commutative().p66()}, {SIMDInstructionInfo(0x58).pf3()}, {SIMDInstructionInfo(0x58).pf2()}};
-	const xImpl_G1Arith xSUB = {{G1Type_SUB}, {SIMDInstructionInfo(0x5c)}, {SIMDInstructionInfo(0x5c).p66()}, {SIMDInstructionInfo(0x5c).pf3()}, {SIMDInstructionInfo(0x5c).pf2()}};
-
-	const xImpl_Group1 xADC = {G1Type_ADC};
-	const xImpl_Group1 xSBB = {G1Type_SBB};
-	const xImpl_Group1 xCMP = {G1Type_CMP};
 
 	// =====================================================================================================
 	//  Group 2 Instructions - SHR, SHL, etc.
@@ -151,13 +141,6 @@ namespace x86Emitter
 		}
 	}
 
-	const xImpl_Group2 xROL = {G2Type_ROL};
-	const xImpl_Group2 xROR = {G2Type_ROR};
-	const xImpl_Group2 xRCL = {G2Type_RCL};
-	const xImpl_Group2 xRCR = {G2Type_RCR};
-	const xImpl_Group2 xSHL = {G2Type_SHL};
-	const xImpl_Group2 xSHR = {G2Type_SHR};
-	const xImpl_Group2 xSAR = {G2Type_SAR};
 
 
 	// =====================================================================================================
@@ -207,13 +190,6 @@ namespace x86Emitter
 	void xImpl_iMul::operator()(const xRegister16& to, const xRegister16& from, s16 imm) const { _imul_ImmStyle(to, from, imm); }
 	void xImpl_iMul::operator()(const xRegister16& to, const xIndirectVoid& from, s16 imm) const { _imul_ImmStyle(to, from, imm); }
 
-	const xImpl_Group3 xNOT = {G3Type_NOT};
-	const xImpl_Group3 xNEG = {G3Type_NEG};
-	const xImpl_Group3 xUMUL = {G3Type_MUL};
-	const xImpl_Group3 xUDIV = {G3Type_DIV};
-
-	const xImpl_iDiv xDIV = {{G3Type_iDIV}, {SIMDInstructionInfo(0x5e)}, {SIMDInstructionInfo(0x5e).p66()}, {SIMDInstructionInfo(0x5e).pf3()}, {SIMDInstructionInfo(0x5e).pf2()}};
-	const xImpl_iMul xMUL = {{G3Type_iMUL}, {SIMDInstructionInfo(0x59).commutative()}, {SIMDInstructionInfo(0x59).commutative().p66()}, {SIMDInstructionInfo(0x59).pf3()}, {SIMDInstructionInfo(0x59).pf2()}};
 
 	// =====================================================================================================
 	//  Group 8 Instructions
@@ -238,10 +214,6 @@ namespace x86Emitter
 		xOpWrite0F(bitoffset->GetPrefix16(), 0xa3 | (InstType << 3), bitoffset, bitbase);
 	}
 
-	const xImpl_Group8 xBT = {G8Type_BT};
-	const xImpl_Group8 xBTR = {G8Type_BTR};
-	const xImpl_Group8 xBTS = {G8Type_BTS};
-	const xImpl_Group8 xBTC = {G8Type_BTC};
 
 
 

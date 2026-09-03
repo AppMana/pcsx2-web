@@ -14,6 +14,9 @@
 # undef FSCALE // Defined in a macOS header
 #endif
 
+namespace x86Emitter
+{
+
 //------------------------------------------------------------------
 // legacy jump/align functions
 //------------------------------------------------------------------
@@ -184,3 +187,4 @@ ATTR_DEP extern void SSE2_MAXSD_XMM_to_XMM(x86SSERegType to, x86SSERegType from)
 ATTR_DEP extern void SSE2_MINSD_XMM_to_XMM(x86SSERegType to, x86SSERegType from);
 ATTR_DEP extern void SSE2_ADDSD_XMM_to_XMM(x86SSERegType to, x86SSERegType from);
 ATTR_DEP extern void SSE2_SUBSD_XMM_to_XMM(x86SSERegType to, x86SSERegType from);
+} // namespace x86Emitter

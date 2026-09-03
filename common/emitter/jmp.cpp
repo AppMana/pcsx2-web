@@ -34,8 +34,6 @@ namespace x86Emitter
 		EmitSibMagic(isJmp ? 4 : 2, src);
 	}
 
-	const xImpl_JmpCall xJMP = {true};
-	const xImpl_JmpCall xCALL = {false};
 
 
 	template <typename Reg1, typename Reg2>
@@ -141,7 +139,6 @@ namespace x86Emitter
 		xCALL(f);
 	}
 
-	const xImpl_FastCall xFastCall = {};
 
 	// ------------------------------------------------------------------------
 	// Emits a 32 bit jump, and returns a pointer to the 32 bit displacement.
@@ -256,14 +253,4 @@ namespace x86Emitter
 		}
 	}
 
-	// returns the inverted conditional type for this Jcc condition.  Ie, JNS will become JS.
-	__fi JccComparisonType xInvertCond(JccComparisonType src)
-	{
-		pxAssert(src != Jcc_Unknown);
-		if (Jcc_Unconditional == src)
-			return Jcc_Unconditional;
-
-		// x86 conditionals are clever!  To invert conditional types, just invert the lower bit:
-		return (JccComparisonType)((int)src ^ 1);
-	}
 } // namespace x86Emitter
