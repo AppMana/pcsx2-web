@@ -129,6 +129,14 @@ std::unique_ptr<AudioStream> AudioStream::CreateStream(AudioBackend backend, u32
 		case AudioBackend::SDL:
 			return CreateSDLAudioStream(sample_rate, parameters, stretch_enabled, error);
 
+		case AudioBackend::WebAudio:
+#ifdef __EMSCRIPTEN__
+			return CreateWebAudioStream(sample_rate, parameters, stretch_enabled, error);
+#else
+			Error::SetStringView(error, "The Web Audio backend is only available in the browser build.");
+			return nullptr;
+#endif
+
 		case AudioBackend::Null:
 			return CreateNullStream(sample_rate, parameters.buffer_ms);
 
@@ -159,11 +167,13 @@ static constexpr const std::array s_backend_names = {
 	"Null",
 	"Cubeb",
 	"SDL",
+	"WebAudio",
 };
 static constexpr const std::array s_backend_display_names = {
 	TRANSLATE_NOOP("AudioStream", "Null (No Output)"),
 	TRANSLATE_NOOP("AudioStream", "Cubeb"),
 	TRANSLATE_NOOP("AudioStream", "SDL"),
+	TRANSLATE_NOOP("AudioStream", "Web Audio"),
 };
 
 std::optional<AudioBackend> AudioStream::ParseBackendName(const char* str)
@@ -567,6 +577,8 @@ void AudioStream::EndWrite(u32 num_frames)
 
 void AudioStream::WriteChunk(const SampleType* chunk)
 {
+	OnChunkWritten(chunk);
+
 	if (!IsExpansionEnabled() && !IsStretchEnabled())
 	{
 		InternalWriteFrames(chunk, CHUNK_SIZE);

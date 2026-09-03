@@ -907,7 +907,9 @@ set(pcsx2DebugToolsHeaders
 set(pcsx2HostSources
 	Host/AudioStream.cpp)
 if(ARCH_WASM32)
-	list(APPEND pcsx2HostSources wasm/WasmAudioStream.cpp)
+	list(APPEND pcsx2HostSources
+		Host/WebAudioStream.cpp
+		wasm/WasmAudioStream.cpp)
 else()
 	list(APPEND pcsx2HostSources
 		Host/CubebAudioStream.cpp
@@ -917,6 +919,9 @@ endif()
 set(pcsx2HostHeaders
 	Host/AudioStream.h
 	Host/AudioStreamTypes.h)
+if(ARCH_WASM32)
+	list(APPEND pcsx2HostHeaders Host/WebAudioStream.h)
+endif()
 
 set(pcsx2ImGuiSources
 	ImGui/FullscreenUI.cpp

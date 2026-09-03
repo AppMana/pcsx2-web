@@ -120,6 +120,10 @@ protected:
 
 	void ReadFrames(SampleType* samples, u32 num_frames);
 
+	/// Called with every CHUNK_SIZE frame block the emulator writes, before expansion, stretching or
+	/// overrun handling, so a backend can observe exactly what the SPU2 produced.
+	virtual void OnChunkWritten(const SampleType* chunk) {}
+
 	template <AudioExpansionMode mode, ReadChannel c0 = READ_CHANNEL_NONE, ReadChannel c1 = READ_CHANNEL_NONE,
 		ReadChannel c2 = READ_CHANNEL_NONE, ReadChannel c3 = READ_CHANNEL_NONE, ReadChannel c4 = READ_CHANNEL_NONE,
 		ReadChannel c5 = READ_CHANNEL_NONE, ReadChannel c6 = READ_CHANNEL_NONE, ReadChannel c7 = READ_CHANNEL_NONE>
@@ -148,6 +152,9 @@ private:
 		const char* driver_name, const char* device_name, bool stretch_enabled, Error* error);
 
 	static std::unique_ptr<AudioStream> CreateSDLAudioStream(u32 sample_rate, const AudioStreamParameters& parameters,
+		bool stretch_enabled, Error* error);
+
+	static std::unique_ptr<AudioStream> CreateWebAudioStream(u32 sample_rate, const AudioStreamParameters& parameters,
 		bool stretch_enabled, Error* error);
 
 	void AllocateBuffer();
