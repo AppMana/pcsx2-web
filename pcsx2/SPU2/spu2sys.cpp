@@ -18,6 +18,7 @@
 #include "SPU2/spu2.h"
 
 #include "common/Console.h"
+#include "common/FPControl.h"
 
 s16 spu2regs[0x010000 / sizeof(s16)];
 s16 _spu2mem[0x200000 / sizeof(s16)];
@@ -338,28 +339,36 @@ __forceinline void TimeUpdate(u64 cClocks)
 	}
 
 	//Update Mixing Progress
-	while (dClocks >= TickInterval)
+	if (dClocks >= TickInterval)
 	{
-		dClocks -= TickInterval;
-		lClocks += TickInterval;
-		Cycles++;
+		// The mixer runs on the emulation thread under whatever rounding mode the EE's FPU
+		// control register selected; its host float math (the output DC filter) must round to
+		// nearest so that the same samples come out on every host.
+		FPControlRegisterBackup fpcr(FPControlRegister::GetDefault());
 
-		for(int c = 0; c < 2; c++)
+		while (dClocks >= TickInterval)
 		{
-			if (Cores[c].KeyOff)
+			dClocks -= TickInterval;
+			lClocks += TickInterval;
+			Cycles++;
+
+			for(int c = 0; c < 2; c++)
 			{
-				StopVoices(c, Cores[c].KeyOff);
-				Cores[c].KeyOff = 0;
+				if (Cores[c].KeyOff)
+				{
+					StopVoices(c, Cores[c].KeyOff);
+					Cores[c].KeyOff = 0;
+				}
+
+				if (Cores[c].KeyOn)
+				{
+					StartVoices(c, Cores[c].KeyOn);
+					Cores[c].KeyOn = 0;
+				}
 			}
 
-			if (Cores[c].KeyOn)
-			{
-				StartVoices(c, Cores[c].KeyOn);
-				Cores[c].KeyOn = 0;
-			}
+			spu2Mix();
 		}
-
-		spu2Mix();
 	}
 
 	CheckDMAProgress(0);
