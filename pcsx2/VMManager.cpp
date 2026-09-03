@@ -5,6 +5,9 @@
 #include "BuildVersion.h"
 #include "CDVD/CDVD.h"
 #include "CDVD/IsoReader.h"
+#ifdef __EMSCRIPTEN__
+#include "CDVD/OpfsFileReader.h"
+#endif
 #include "Counters.h"
 #include "DEV9/DEV9.h"
 #include "DebugTools/DebugInterface.h"
@@ -1237,11 +1240,22 @@ bool VMManager::HasBootedELF()
 	return s_current_crc != 0 && s_elf_executed;
 }
 
+// Disc images in origin-private storage are not visible to stat(); the reader reports a missing
+// file when it opens them.
+static bool DiscImageExists(const std::string& filename)
+{
+#ifdef __EMSCRIPTEN__
+	if (Opfs::IsOpfsPath(filename))
+		return true;
+#endif
+	return FileSystem::FileExists(filename.c_str());
+}
+
 bool VMManager::AutoDetectSource(const std::string& filename, Error* error)
 {
 	if (!filename.empty())
 	{
-		if (!FileSystem::FileExists(filename.c_str()))
+		if (!DiscImageExists(filename))
 		{
 			Error::SetStringFmt(error, TRANSLATE_FS("VMManager", "Requested filename '{}' does not exist."), filename);
 			return false;
@@ -1411,7 +1425,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	if (boot_params.source_type.has_value())
 	{
 		if (boot_params.source_type.value() == CDVD_SourceType::Iso &&
-			!FileSystem::FileExists(boot_params.filename.c_str()))
+			!DiscImageExists(boot_params.filename))
 		{
 			Error::SetStringFmt(error,
 				TRANSLATE_FS("VMManager", "Requested filename '{}' does not exist."), boot_params.filename);

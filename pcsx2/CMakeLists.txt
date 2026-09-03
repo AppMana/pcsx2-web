@@ -279,6 +279,11 @@ set(pcsx2CDVDHeaders
 	CDVD/zlib_indexed.h
 	)
 
+if(ARCH_WASM32)
+	list(APPEND pcsx2CDVDSources CDVD/OpfsFileReader.cpp)
+	list(APPEND pcsx2CDVDHeaders CDVD/OpfsFileReader.h)
+endif()
+
 # SPU2 sources
 set(pcsx2SPU2Sources
 	SPU2/ADSR.cpp

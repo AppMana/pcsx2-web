@@ -28,11 +28,13 @@ target_link_options(pcsx2_web_runtime PRIVATE
 	"-sNO_EXIT_RUNTIME=1"
 	"-sFORCE_FILESYSTEM=1"
 	"-sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap','HEAPU8','HEAP32','HEAPU32','PThread','UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-	"-sEXPORTED_FUNCTIONS=['_malloc','_free']"
+	"-sEXPORTED_FUNCTIONS=['_malloc','_free','_emscripten_proxy_finish']"
 	"-sWASM_BIGINT=1"
 	"-sASSERTIONS=1"
+	"--js-library=${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_opfs.js"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/fonts@/pcsx2/resources/fonts"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/GameIndex.yaml@/pcsx2/resources/GameIndex.yaml")
+set_property(TARGET pcsx2_web_runtime APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_opfs.js")
 if(PCSX2_WEB_PROFILE)
 	target_link_options(pcsx2_web_runtime PRIVATE --profiling-funcs)
 endif()

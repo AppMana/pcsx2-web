@@ -18,6 +18,10 @@
 
 #include "fmt/format.h"
 
+#ifdef __EMSCRIPTEN__
+#include "CDVD/OpfsFileReader.h"
+#endif
+
 static const char* nameFromType(int type)
 {
 	switch (type)
@@ -37,12 +41,28 @@ static const char* nameFromType(int type)
 	}
 }
 
-static std::unique_ptr<ThreadedFileReader> GetFileReader(const std::string& path)
+static std::unique_ptr<ThreadedFileReader> GetFileReader(const std::string& path, Error* error)
 {
 	const std::string_view extension = Path::GetExtension(path);
 
 	if (StringUtil::compareNoCase(extension, "chd"))
 		return std::make_unique<ChdFileReader>();
+
+#ifdef __EMSCRIPTEN__
+	// Images in origin-private storage are read through the OPFS thread; the readers built on
+	// stdio (CSO, gzip, block dumps) cannot reach them.
+	if (Opfs::IsOpfsPath(path))
+	{
+		if (StringUtil::compareNoCase(extension, "cso") || StringUtil::compareNoCase(extension, "zso") ||
+			StringUtil::compareNoCase(extension, "gz") || StringUtil::compareNoCase(extension, "dump"))
+		{
+			Error::SetStringFmt(error, "{} images are not supported from origin-private storage; use ISO/BIN or CHD.", extension);
+			return nullptr;
+		}
+
+		return std::make_unique<OpfsFileReader>();
+	}
+#endif
 
 	if (StringUtil::compareNoCase(extension, "cso") || StringUtil::compareNoCase(extension, "zso"))
 		return std::make_unique<CsoFileReader>();
@@ -193,7 +213,10 @@ bool InputIsoFile::Open(std::string srcfile, Error* error)
 {
 	Close();
 	m_filename = std::move(srcfile);
-	m_reader = GetFileReader(m_filename);
+	m_reader = GetFileReader(m_filename, error);
+	if (!m_reader)
+		return false;
+
 	if (!m_reader->Open(m_filename, error))
 	{
 		m_reader.reset();
