@@ -6,6 +6,9 @@ option(PCSX2_WEB_PROFILE "Keep function names in the wasm modules so browser sta
 
 add_executable(pcsx2_web_runtime host/pcsx2_web_main.cpp)
 target_link_libraries(pcsx2_web_runtime PRIVATE PCSX2_FLAGS PCSX2)
+# The Web Audio JS library routes emscripten/webaudio.h through the page that owns the AudioContext.
+set(PCSX2_WEB_AUDIO_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_audio_library.js")
+set_property(TARGET pcsx2_web_runtime APPEND PROPERTY LINK_DEPENDS "${PCSX2_WEB_AUDIO_LIBRARY}")
 target_include_directories(pcsx2_web_runtime PRIVATE
 	"${CMAKE_BINARY_DIR}/common/include"
 	"${CMAKE_SOURCE_DIR}/pcsx2")
@@ -31,6 +34,10 @@ target_link_options(pcsx2_web_runtime PRIVATE
 	"-sEXPORTED_FUNCTIONS=['_malloc','_free']"
 	"-sWASM_BIGINT=1"
 	"-sASSERTIONS=1"
+	"-sAUDIO_WORKLET=1"
+	"-sWASM_WORKERS=1"
+	"-sAUDIO_WORKLET_SUPPORT_AUDIO_PARAMS=0"
+	"--js-library=${PCSX2_WEB_AUDIO_LIBRARY}"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/fonts@/pcsx2/resources/fonts"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/GameIndex.yaml@/pcsx2/resources/GameIndex.yaml")
 if(PCSX2_WEB_PROFILE)

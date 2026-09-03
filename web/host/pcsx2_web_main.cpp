@@ -7,6 +7,8 @@
 
 #include <emscripten.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdlib>
@@ -16,6 +18,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "fmt/format.h"
 
@@ -40,6 +43,7 @@
 #include "pcsx2/GameList.h"
 #include "pcsx2/Host.h"
 #include "pcsx2/Host/AudioStream.h"
+#include "pcsx2/Host/WebAudioStream.h"
 #include "pcsx2/ImGui/FullscreenUI.h"
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
@@ -47,6 +51,7 @@
 #include "pcsx2/MTGS.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/PerformanceMetrics.h"
+#include "pcsx2/Recording/PadData.h"
 #include "pcsx2/TraceHash.h"
 #include "pcsx2/VMManager.h"
 
@@ -108,7 +113,107 @@ namespace WebHost
 	static std::string s_trace_buffer;
 
 	alignas(4) static std::atomic<u32> s_frame_count{0};
+
+	// Pad states in the .p2m2 per-port layout (PadData's 18 byte array): two active-low button
+	// groups, right and left analogs, twelve pressures. A live state set through
+	// pcsx2_web_set_pad takes effect at the next vsync; the schedule holds frame-indexed states
+	// that take effect at the vsync whose g_FrameCount equals their frame, at the point where
+	// the input recording replay would override the pad, so a replayed schedule and a .p2m2
+	// recording drive the guest identically.
+	using PadBytes = std::array<u8, 18>;
+	static constexpr u32 PAD_PORTS = 2;
+
+	struct PadScheduleEntry
+	{
+		u32 frame;
+		u32 port;
+		PadBytes bytes;
+	};
+
+	static std::mutex s_pad_mutex;
+	static std::array<std::optional<PadBytes>, PAD_PORTS> s_pad_pending;
+	static std::array<std::optional<PadBytes>, PAD_PORTS> s_pad_current;
+	static std::vector<PadScheduleEntry> s_pad_schedule;
+	static size_t s_pad_schedule_next = 0;
+	static std::atomic<u32> s_pad_applied_count{0};
+
+	static PadBytes PadBytesFromState(u32 buttons, u32 lx, u32 ly, u32 rx, u32 ry, const u8* pressures);
+	static void ApplyPadOnCPUThread();
 } // namespace WebHost
+
+WebHost::PadBytes WebHost::PadBytesFromState(u32 buttons, u32 lx, u32 ly, u32 rx, u32 ry, const u8* pressures)
+{
+	// buttons: digital1 in bits 0-7 (select, l3, r3, start, up, right, down, left) and digital2 in
+	// bits 8-15 (l2, r2, l1, r1, triangle, circle, cross, square), pressed bits set, the same
+	// layout as the pad's own digital bytes and the kit's DIGITAL1/DIGITAL2 constants.
+	const u8 digital1 = static_cast<u8>(buttons & 0xffu);
+	const u8 digital2 = static_cast<u8>((buttons >> 8) & 0xffu);
+
+	PadBytes bytes = {};
+	bytes[0] = static_cast<u8>(~digital1);
+	bytes[1] = static_cast<u8>(~digital2);
+	bytes[2] = static_cast<u8>(std::min<u32>(rx, 255));
+	bytes[3] = static_cast<u8>(std::min<u32>(ry, 255));
+	bytes[4] = static_cast<u8>(std::min<u32>(lx, 255));
+	bytes[5] = static_cast<u8>(std::min<u32>(ly, 255));
+
+	if (pressures)
+	{
+		std::memcpy(&bytes[6], pressures, 12);
+	}
+	else
+	{
+		// right, left, up, down, triangle, circle, cross, square, l1, r1, l2, r2: full pressure when
+		// pressed, the same rule the kit's input recording writer applies.
+		static constexpr std::array<std::pair<u8, u8>, 12> pressure_bits = {{
+			{1, 0x20}, {1, 0x80}, {1, 0x10}, {1, 0x40},
+			{2, 0x10}, {2, 0x20}, {2, 0x40}, {2, 0x80},
+			{2, 0x04}, {2, 0x08}, {2, 0x01}, {2, 0x02},
+		}};
+		for (size_t i = 0; i < pressure_bits.size(); i++)
+		{
+			const u8 group = (pressure_bits[i].first == 1) ? digital1 : digital2;
+			bytes[6 + i] = (group & pressure_bits[i].second) ? 255 : 0;
+		}
+	}
+
+	return bytes;
+}
+
+void WebHost::ApplyPadOnCPUThread()
+{
+	if (!VMManager::HasValidVM())
+		return;
+
+	const u32 frame = g_FrameCount;
+	std::array<std::optional<PadBytes>, PAD_PORTS> states;
+	{
+		std::lock_guard lock(s_pad_mutex);
+		for (u32 port = 0; port < PAD_PORTS; port++)
+		{
+			if (s_pad_pending[port].has_value())
+			{
+				s_pad_current[port] = s_pad_pending[port];
+				s_pad_pending[port].reset();
+			}
+		}
+		while (s_pad_schedule_next < s_pad_schedule.size() && s_pad_schedule[s_pad_schedule_next].frame <= frame)
+		{
+			const PadScheduleEntry& entry = s_pad_schedule[s_pad_schedule_next++];
+			s_pad_current[entry.port] = entry.bytes;
+		}
+		states = s_pad_current;
+	}
+
+	for (u32 port = 0; port < PAD_PORTS; port++)
+	{
+		if (!states[port].has_value())
+			continue;
+
+		PadData(static_cast<int>(port), 0, states[port].value()).OverrideActualController();
+		s_pad_applied_count.fetch_add(1, std::memory_order_relaxed);
+	}
+}
 
 void WebHost::LogCallback(LOGLEVEL level, ConsoleColors color, std::string_view message)
 {
@@ -179,7 +284,11 @@ void WebHost::SettingsOverride()
 
 	s_settings_interface.SetBoolValue("InputSources", "SDL", false);
 
-	s_settings_interface.SetStringValue("SPU2/Output", "OutputModule", "nullout");
+	// Audio reaches the page through the Web Audio backend when it attaches an AudioContext;
+	// without one the stream fills and drops chunks silently. Time stretching is off so that
+	// what the SPU2 wrote is what gets hashed and played.
+	s_settings_interface.SetStringValue("SPU2/Output", "Backend", "WebAudio");
+	s_settings_interface.SetStringValue("SPU2/Output", "SyncMode", "Disabled");
 
 	s_settings_interface.SetBoolValue("EmuCore/Speedhacks", "vuThread", false);
 	s_settings_interface.SetBoolValue("EmuCore", "EnableDiscordPresence", false);
@@ -456,6 +565,93 @@ EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_pending()
 	return static_cast<int>(WebHost::s_trace_buffer.size());
 }
 
+// Sets the live state of a pad port; it is applied on the CPU thread at the next vsync.
+// buttons packs digital1 (bits 0-7) and digital2 (bits 8-15) with pressed bits set; the analogs
+// are 0-255 with 127 centered; pressures is null or twelve bytes in the .p2m2 order (right,
+// left, up, down, triangle, circle, cross, square, l1, r1, l2, r2).
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_pad(int port, int buttons, int lx, int ly, int rx, int ry, const u8* pressures)
+{
+	if (port < 0 || port >= static_cast<int>(WebHost::PAD_PORTS) || buttons < 0 || buttons > 0xffff ||
+		lx < 0 || ly < 0 || rx < 0 || ry < 0)
+	{
+		return 1;
+	}
+
+	const WebHost::PadBytes bytes = WebHost::PadBytesFromState(static_cast<u32>(buttons), static_cast<u32>(lx),
+		static_cast<u32>(ly), static_cast<u32>(rx), static_cast<u32>(ry), pressures);
+	std::lock_guard lock(WebHost::s_pad_mutex);
+	WebHost::s_pad_pending[port] = bytes;
+	return 0;
+}
+
+// Adds a frame-indexed pad state, applied at the vsync with that g_FrameCount and kept until a
+// later entry for the same port. Entries are ordered by frame; equal frames keep insertion order.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_pad_schedule_add(int frame, int port, int buttons, int lx, int ly, int rx, int ry, const u8* pressures)
+{
+	if (frame < 0 || port < 0 || port >= static_cast<int>(WebHost::PAD_PORTS) || buttons < 0 || buttons > 0xffff ||
+		lx < 0 || ly < 0 || rx < 0 || ry < 0)
+	{
+		return 1;
+	}
+
+	WebHost::PadScheduleEntry entry;
+	entry.frame = static_cast<u32>(frame);
+	entry.port = static_cast<u32>(port);
+	entry.bytes = WebHost::PadBytesFromState(static_cast<u32>(buttons), static_cast<u32>(lx), static_cast<u32>(ly),
+		static_cast<u32>(rx), static_cast<u32>(ry), pressures);
+
+	std::lock_guard lock(WebHost::s_pad_mutex);
+	auto pos = std::upper_bound(WebHost::s_pad_schedule.begin(), WebHost::s_pad_schedule.end(), entry.frame,
+		[](u32 value, const WebHost::PadScheduleEntry& other) { return value < other.frame; });
+	const size_t index = static_cast<size_t>(pos - WebHost::s_pad_schedule.begin());
+	WebHost::s_pad_schedule.insert(pos, std::move(entry));
+	if (index < WebHost::s_pad_schedule_next)
+		WebHost::s_pad_schedule_next++;
+	return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_pad_schedule_clear()
+{
+	std::lock_guard lock(WebHost::s_pad_mutex);
+	WebHost::s_pad_schedule.clear();
+	WebHost::s_pad_schedule_next = 0;
+	return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_pad_schedule_size()
+{
+	std::lock_guard lock(WebHost::s_pad_mutex);
+	return static_cast<int>(WebHost::s_pad_schedule.size());
+}
+
+// Number of pad states applied to the guest controller, one per port per vsync with a state.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_pad_applied_count()
+{
+	return static_cast<int>(WebHost::s_pad_applied_count.load(std::memory_order_relaxed));
+}
+
+// Starts the audio worklet on the page's AudioContext. The page must have handed its message
+// port to the module (Module.pcsx2AudioPort) before this is called; see
+// web/host/pcsx2_web_audio_library.js and web/public/pcsx2-web-audio.mjs.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_audio_attach(int sample_rate)
+{
+	if (sample_rate <= 0)
+		return 1;
+	return WebAudio::Attach(static_cast<u32>(sample_rate)) ? 0 : 2;
+}
+
+// WebAudio::State: -1 failed, 0 detached, 1 starting, 2 ready.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_audio_status()
+{
+	return static_cast<int>(WebAudio::GetState());
+}
+
+// Address of the WebAudio::StatsIndex counters (u32 each).
+EMSCRIPTEN_KEEPALIVE const void* pcsx2_web_audio_stats_address()
+{
+	return WebAudio::StatsAddress();
+}
+
 } // extern "C"
 
 //////////////////////////////////////////////////////////////////////////
@@ -577,6 +773,9 @@ void Host::RequestResizeHostDisplay(s32 width, s32 height)
 
 void Host::OnVMStarting()
 {
+	// A new VM counts frames from zero again, so the schedule replays from its start.
+	std::lock_guard lock(WebHost::s_pad_mutex);
+	WebHost::s_pad_schedule_next = 0;
 }
 
 void Host::OnVMStarted()
@@ -593,7 +792,7 @@ void Host::OnVSyncTrace()
 		if (mask & WebHost::TraceCPU)
 			records += TraceHash::FormatCPURecord(frame, WebHost::s_trace_ram_every.load(std::memory_order_acquire));
 		if (mask & WebHost::TraceAudio)
-			records += TraceHash::FormatAudioRecord(frame);
+			records += WebAudio::HasActiveStream() ? WebAudio::FormatAudioRecord(frame) : TraceHash::FormatAudioRecord(frame);
 
 		if (!records.empty())
 		{
@@ -755,6 +954,7 @@ int Host::LocaleSensitiveCompare(std::string_view lhs, std::string_view rhs)
 void Host::PumpMessagesOnCPUThread()
 {
 	WebHost::ProcessCPUThreadTasks();
+	WebHost::ApplyPadOnCPUThread();
 }
 
 s32 Host::Internal::GetTranslatedStringImpl(
