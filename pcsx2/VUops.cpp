@@ -473,9 +473,6 @@ static __fi float vuMul(float a, float b) { return SoftFloat::Mul(a, b, FPContro
 static __fi float vuDiv(float a, float b) { return SoftFloat::Div(a, b, FPControlRegister::GetCurrent()); }
 static __fi float vuSqrt(float a) { return SoftFloat::Sqrt(a, FPControlRegister::GetCurrent()); }
 static __fi float vuFromInt(s32 v) { return SoftFloat::FromInt(v, FPControlRegister::GetCurrent()); }
-// The native build contracts acc + fs * ft and the EFU sums of squares into FMA instructions
-// (-ffp-contract=fast with an FMA capable -march), so those round once.
-static __fi float vuFma(float a, float b, float c) { return SoftFloat::Fma(a, b, c, FPControlRegister::GetCurrent()); }
 #else
 static __fi float vuAdd(float a, float b) { return a + b; }
 static __fi float vuSub(float a, float b) { return a - b; }
@@ -726,11 +723,7 @@ static __fi void applyTernaryMACOpBroadcast(VURegs* VU, u32 bc)
 
 static __fi float _vuOpMADD(u32 acc, u32 fs, u32 ft)
 {
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	return vuFma(vuDouble(fs), vuDouble(ft), vuDouble(acc));
-#else
-	return vuDouble(acc) + vuDouble(fs) * vuDouble(ft);
-#endif
+	return vuAdd(vuDouble(acc), vuMul(vuDouble(fs), vuDouble(ft)));
 }
 
 static __fi void _vuMADD(VURegs* VU)
@@ -769,11 +762,7 @@ static __fi void _vuMADDAw(VURegs* VU) { vuMADDAbc(VU, VU->VF[_Ft_].i.w); }
 
 static __fi float _vuOpMSUB(u32 acc, u32 fs, u32 ft)
 {
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	return vuFma(-vuDouble(fs), vuDouble(ft), vuDouble(acc));
-#else
-	return vuDouble(acc) - vuDouble(fs) * vuDouble(ft);
-#endif
+	return vuSub(vuDouble(acc), vuMul(vuDouble(fs), vuDouble(ft)));
 }
 
 static __fi void _vuMSUB(VURegs* VU)
@@ -894,15 +883,9 @@ static __fi void _vuOPMSUB(VURegs* VU)
 	fsy = vuDouble(VU->VF[_Fs_].i.y);
 	fsz = vuDouble(VU->VF[_Fs_].i.z);
 
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	dst->i.x = VU_MACx_UPDATE(VU, vuFma(-fsy, ftz, vuDouble(VU->ACC.i.x)));
-	dst->i.y = VU_MACy_UPDATE(VU, vuFma(-fsz, ftx, vuDouble(VU->ACC.i.y)));
-	dst->i.z = VU_MACz_UPDATE(VU, vuFma(-fsx, fty, vuDouble(VU->ACC.i.z)));
-#else
-	dst->i.x = VU_MACx_UPDATE(VU, vuDouble(VU->ACC.i.x) - fsy * ftz);
-	dst->i.y = VU_MACy_UPDATE(VU, vuDouble(VU->ACC.i.y) - fsz * ftx);
-	dst->i.z = VU_MACz_UPDATE(VU, vuDouble(VU->ACC.i.z) - fsx * fty);
-#endif
+	dst->i.x = VU_MACx_UPDATE(VU, vuSub(vuDouble(VU->ACC.i.x), vuMul(fsy, ftz)));
+	dst->i.y = VU_MACy_UPDATE(VU, vuSub(vuDouble(VU->ACC.i.y), vuMul(fsz, ftx)));
+	dst->i.z = VU_MACz_UPDATE(VU, vuSub(vuDouble(VU->ACC.i.z), vuMul(fsx, fty)));
 	VU_STAT_UPDATE(VU);
 }
 
@@ -1686,43 +1669,25 @@ static __ri void _vuWAITP(VURegs* VU)
 {
 }
 
-// x*x + y*y + z*z as the native build evaluates it. The compiler contracts the two additions into
-// FMAs and the order it picks differs per function: ESADD/ERSADD round y*y first, ELENG/ERLENG
-// round x*x first.
-static __fi float _vuSumOfSquaresYXZ(const VURegs* VU)
+// x*x + y*y + z*z: each square rounded, then the sums left to right.
+static __fi float _vuSumOfSquares(const VURegs* VU)
 {
-#ifdef PCSX2_SOFT_FLOAT_MODE
 	const float x = vuDouble(VU->VF[_Fs_].i.x);
 	const float y = vuDouble(VU->VF[_Fs_].i.y);
 	const float z = vuDouble(VU->VF[_Fs_].i.z);
-	return vuFma(z, z, vuFma(x, x, vuMul(y, y)));
-#else
-	return vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
-#endif
-}
-
-static __fi float _vuSumOfSquaresXYZ(const VURegs* VU)
-{
-#ifdef PCSX2_SOFT_FLOAT_MODE
-	const float x = vuDouble(VU->VF[_Fs_].i.x);
-	const float y = vuDouble(VU->VF[_Fs_].i.y);
-	const float z = vuDouble(VU->VF[_Fs_].i.z);
-	return vuFma(z, z, vuFma(y, y, vuMul(x, x)));
-#else
-	return vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
-#endif
+	return vuAdd(vuAdd(vuMul(x, x), vuMul(y, y)), vuMul(z, z));
 }
 
 static __ri void _vuESADD(VURegs* VU)
 {
-	float p = _vuSumOfSquaresYXZ(VU);
+	float p = _vuSumOfSquares(VU);
 
 	VU->p.F = p;
 }
 
 static __ri void _vuERSADD(VURegs* VU)
 {
-	float p = _vuSumOfSquaresYXZ(VU);
+	float p = _vuSumOfSquares(VU);
 
 	if (p != 0.0)
 		p = vuDiv(1.0f, p);
@@ -1732,7 +1697,7 @@ static __ri void _vuERSADD(VURegs* VU)
 
 static __ri void _vuELENG(VURegs* VU)
 {
-	float p = _vuSumOfSquaresXYZ(VU);
+	float p = _vuSumOfSquares(VU);
 
 	if (p >= 0)
 	{
@@ -1743,7 +1708,7 @@ static __ri void _vuELENG(VURegs* VU)
 
 static __ri void _vuERLENG(VURegs* VU)
 {
-	float p = _vuSumOfSquaresXYZ(VU);
+	float p = _vuSumOfSquares(VU);
 
 	if (p >= 0)
 	{

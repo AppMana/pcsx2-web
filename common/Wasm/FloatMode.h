@@ -313,19 +313,6 @@ namespace SoftFloat
 		return ApplyFTZ(SumRound(static_cast<double>(a), static_cast<double>(b), fpcr.GetRoundMode()), fpcr);
 	}
 
-	// a * b + c with one rounding, as the host FMA instruction computes it. The product of two
-	// singles is exact in a double, so the fused result is the rounded sum of that product and c.
-	__forceinline_odr float Fma(float a, float b, float c, FPControlRegister fpcr)
-	{
-		a = ApplyDAZ(a, fpcr);
-		b = ApplyDAZ(b, fpcr);
-		c = ApplyDAZ(c, fpcr);
-		if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c))
-			return a * b + c;
-
-		return ApplyFTZ(SumRound(static_cast<double>(a) * static_cast<double>(b), static_cast<double>(c), fpcr.GetRoundMode()), fpcr);
-	}
-
 	__forceinline_odr float Sub(float a, float b, FPControlRegister fpcr)
 	{
 		return Add(a, -b, fpcr);
