@@ -34,10 +34,12 @@
 
 #include "pcsx2/Achievements.h"
 #include "pcsx2/CDVD/CDVD.h"
+#include "pcsx2/Counters.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/GS/Renderers/Common/GSDevice.h"
 #include "pcsx2/GameList.h"
 #include "pcsx2/Host.h"
+#include "pcsx2/Host/AudioStream.h"
 #include "pcsx2/ImGui/FullscreenUI.h"
 #include "pcsx2/ImGui/ImGuiFullscreen.h"
 #include "pcsx2/ImGui/ImGuiManager.h"
@@ -45,6 +47,7 @@
 #include "pcsx2/MTGS.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/PerformanceMetrics.h"
+#include "pcsx2/TraceHash.h"
 #include "pcsx2/VMManager.h"
 
 #include "svnrev.h"
@@ -85,15 +88,37 @@ namespace WebHost
 	static std::mutex s_host_task_mutex;
 	static std::deque<std::function<void()>> s_host_tasks;
 
+	// EE/IOP console lines in the tracerunner's tty.txt format.
 	static std::mutex s_tty_mutex;
 	static std::string s_tty_buffer;
+
+	enum TraceMask : u32
+	{
+		TraceCPU = 1u << 0,
+		TraceAudio = 1u << 1,
+	};
+
+	// cpu.jsonl and audio.jsonl records, appended at every vsync and drained by pcsx2_web_trace_read.
+	static std::atomic<u32> s_trace_mask{0};
+	static std::atomic<u32> s_trace_ram_every{0};
+	static std::mutex s_trace_mutex;
+	static std::string s_trace_buffer;
 
 	alignas(4) static std::atomic<u32> s_frame_count{0};
 } // namespace WebHost
 
 void WebHost::LogCallback(LOGLEVEL level, ConsoleColors color, std::string_view message)
 {
+	const char* prefix;
+	if (color == Color_Cyan)
+		prefix = "EE: ";
+	else if (color == Color_Yellow)
+		prefix = "IOP: ";
+	else
+		return;
+
 	std::lock_guard lock(s_tty_mutex);
+	s_tty_buffer.append(prefix);
 	s_tty_buffer.append(message);
 	s_tty_buffer.push_back('\n');
 }
@@ -247,7 +272,7 @@ EMSCRIPTEN_KEEPALIVE int pcsx2_web_init()
 
 	CrashHandler::Install();
 	Log::SetConsoleOutputLevel(LOGLEVEL_DEBUG);
-	Log::SetHostOutputLevel(LOGLEVEL_DEBUG, &WebHost::LogCallback);
+	Log::SetHostOutputLevel(LOGLEVEL_INFO, &WebHost::LogCallback);
 
 	Console.WriteLnFmt("PCSX2 web host {}", GIT_REV);
 
@@ -382,6 +407,41 @@ EMSCRIPTEN_KEEPALIVE int pcsx2_web_tty_pending()
 	return static_cast<int>(WebHost::s_tty_buffer.size());
 }
 
+// mask: bit 0 = cpu.jsonl records, bit 1 = audio.jsonl records. ram_every hashes memory every
+// that many frames (0 disables). The audio records need the trace audio stream in place before
+// the VM opens its output, so enable them before pcsx2_web_boot.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_enable(int mask, int ram_every)
+{
+	if (mask < 0 || ram_every < 0)
+		return 1;
+
+	if ((static_cast<u32>(mask) & WebHost::TraceAudio) && VMManager::HasValidVM())
+		return 2;
+
+	AudioStream::SetNullStreamFactory((static_cast<u32>(mask) & WebHost::TraceAudio) ? TraceHash::CreateAudioStream : nullptr);
+	WebHost::s_trace_ram_every.store(static_cast<u32>(ram_every), std::memory_order_release);
+	WebHost::s_trace_mask.store(static_cast<u32>(mask), std::memory_order_release);
+	return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_read(char* buffer, int buffer_size)
+{
+	if (!buffer || buffer_size <= 0)
+		return 0;
+
+	std::lock_guard lock(WebHost::s_trace_mutex);
+	const int count = static_cast<int>(std::min<size_t>(WebHost::s_trace_buffer.size(), static_cast<size_t>(buffer_size)));
+	std::memcpy(buffer, WebHost::s_trace_buffer.data(), count);
+	WebHost::s_trace_buffer.erase(0, count);
+	return count;
+}
+
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_pending()
+{
+	std::lock_guard lock(WebHost::s_trace_mutex);
+	return static_cast<int>(WebHost::s_trace_buffer.size());
+}
+
 } // extern "C"
 
 //////////////////////////////////////////////////////////////////////////
@@ -507,6 +567,26 @@ void Host::OnVMStarting()
 
 void Host::OnVMStarted()
 {
+}
+
+void Host::OnVSyncTrace()
+{
+	const u32 mask = WebHost::s_trace_mask.load(std::memory_order_acquire);
+	if (mask == 0)
+		return;
+
+	const u32 frame = g_FrameCount;
+	std::string records;
+	if (mask & WebHost::TraceCPU)
+		records += TraceHash::FormatCPURecord(frame, WebHost::s_trace_ram_every.load(std::memory_order_acquire));
+	if (mask & WebHost::TraceAudio)
+		records += TraceHash::FormatAudioRecord(frame);
+
+	if (!records.empty())
+	{
+		std::lock_guard lock(WebHost::s_trace_mutex);
+		WebHost::s_trace_buffer += records;
+	}
 }
 
 void Host::OnVMDestroyed()

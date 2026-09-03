@@ -413,6 +413,7 @@
     <ClCompile Include="USB\usb-pad\usb-turntable.cpp" />
     <ClCompile Include="USB\usb-printer\usb-printer.cpp" />
     <ClCompile Include="USB\USB.cpp" />
+    <ClCompile Include="TraceHash.cpp" />
     <ClCompile Include="VMManager.cpp" />
     <ClCompile Include="windows\Optimus.cpp" />
     <ClCompile Include="Pcsx2Config.cpp" />
@@ -889,6 +890,7 @@
     <ClInclude Include="Memory.h" />
     <ClInclude Include="Vif_Dynarec.h" />
     <ClInclude Include="Vif_HashBucket.h" />
+    <ClInclude Include="TraceHash.h" />
     <ClInclude Include="VMManager.h" />
     <ClInclude Include="vtlb.h" />
     <ClInclude Include="MTVU.h" />

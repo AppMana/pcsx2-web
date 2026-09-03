@@ -125,6 +125,7 @@ set(pcsx2Sources
 	Vif_Codes.cpp
 	Vif_Transfer.cpp
 	Vif_Unpack.cpp
+	TraceHash.cpp
 	VMManager.cpp
 	vtlb.cpp
 	VU0.cpp
@@ -197,6 +198,7 @@ set(pcsx2Headers
 	Vif_Dma.h
 	Vif.h
 	Vif_Unpack.h
+	TraceHash.h
 	VMManager.h
 	vtlb.h
 	VUflags.h

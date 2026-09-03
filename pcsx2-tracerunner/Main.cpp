@@ -49,15 +49,11 @@
 #include "pcsx2/ImGui/ImGuiManager.h"
 #include "pcsx2/Input/InputManager.h"
 #include "pcsx2/MTGS.h"
-#include "pcsx2/Memory.h"
-#include "pcsx2/R3000A.h"
-#include "pcsx2/R5900.h"
 #include "pcsx2/Recording/InputRecording.h"
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "pcsx2/SPU2/defs.h"
+#include "pcsx2/TraceHash.h"
 #include "pcsx2/VMManager.h"
-#include "pcsx2/VU.h"
-#include "pcsx2/VUmicro.h"
 
 #include "svnrev.h"
 
@@ -81,7 +77,6 @@ namespace TraceRunner
 	static bool WriteManifest();
 	static bool StartInputPlayback();
 	static void LogCallback(LOGLEVEL level, ConsoleColors color, std::string_view message);
-	static std::unique_ptr<AudioStream> CreateTraceAudioStream(u32 sample_rate, u32 buffer_ms);
 
 	static bool CreatePlatformWindow();
 	static void DestroyPlatformWindow();
@@ -123,47 +118,6 @@ static std::mutex s_device_info_mutex;
 static std::string s_device_renderer;
 static std::string s_device_adapter;
 static std::string s_device_driver;
-
-class TraceAudioStream final : public AudioStream
-{
-public:
-	TraceAudioStream(u32 sample_rate, const AudioStreamParameters& parameters)
-		: AudioStream(sample_rate, parameters)
-	{
-		BaseInitialize(&StereoSampleReaderImpl, false);
-	}
-
-	~TraceAudioStream() override;
-
-	u32 Drain(std::vector<SampleType>& samples)
-	{
-		const u32 num_frames = GetBufferedFramesRelaxed();
-		samples.resize(static_cast<size_t>(num_frames) * NUM_INPUT_CHANNELS);
-		if (num_frames > 0)
-			ReadFrames(samples.data(), num_frames);
-		return num_frames;
-	}
-};
-
-static TraceAudioStream* s_trace_audio_stream = nullptr;
-static std::vector<AudioStream::SampleType> s_audio_samples;
-
-TraceAudioStream::~TraceAudioStream()
-{
-	if (s_trace_audio_stream == this)
-		s_trace_audio_stream = nullptr;
-}
-
-std::unique_ptr<AudioStream> TraceRunner::CreateTraceAudioStream(u32 sample_rate, u32 buffer_ms)
-{
-	AudioStreamParameters params;
-	params.expansion_mode = AudioExpansionMode::Disabled;
-	params.buffer_ms = 1000;
-
-	std::unique_ptr<TraceAudioStream> stream = std::make_unique<TraceAudioStream>(sample_rate, params);
-	s_trace_audio_stream = stream.get();
-	return stream;
-}
 
 static void RecordSetting(const char* section, const char* key, std::string value)
 {
@@ -235,80 +189,6 @@ static std::string JsonEscape(std::string_view str)
 static std::string JsonString(std::string_view str)
 {
 	return fmt::format("\"{}\"", JsonEscape(str));
-}
-
-static std::string HashToString(u64 hash)
-{
-	return fmt::format("{:016x}", hash);
-}
-
-static void HashUpdate(XXH3_state_t* state, const void* data, size_t size)
-{
-	XXH3_64bits_update(state, data, size);
-}
-
-template <typename T>
-static void HashUpdate(XXH3_state_t* state, const T& value)
-{
-	XXH3_64bits_update(state, &value, sizeof(value));
-}
-
-static u64 HashEE()
-{
-	XXH3_state_t state;
-	XXH3_64bits_reset(&state);
-	HashUpdate(&state, cpuRegs.GPR);
-	HashUpdate(&state, cpuRegs.HI);
-	HashUpdate(&state, cpuRegs.LO);
-	HashUpdate(&state, &cpuRegs.CP0.r[0], sizeof(u32) * 9);
-	HashUpdate(&state, &cpuRegs.CP0.r[10], sizeof(u32) * 22);
-	HashUpdate(&state, cpuRegs.pc);
-	HashUpdate(&state, cpuRegs.sa);
-	HashUpdate(&state, fpuRegs.fpr);
-	HashUpdate(&state, fpuRegs.fprc);
-	HashUpdate(&state, fpuRegs.ACC);
-	return XXH3_64bits_digest(&state);
-}
-
-static u64 HashIOP()
-{
-	XXH3_state_t state;
-	XXH3_64bits_reset(&state);
-	HashUpdate(&state, psxRegs.GPR);
-	HashUpdate(&state, psxRegs.CP0);
-	HashUpdate(&state, psxRegs.pc);
-	HashUpdate(&state, psxRegs.interrupt);
-	return XXH3_64bits_digest(&state);
-}
-
-static u64 HashVU(const VURegs& vu)
-{
-	XXH3_state_t state;
-	XXH3_64bits_reset(&state);
-	HashUpdate(&state, vu.VF);
-	for (const REG_VI& vi : vu.VI)
-		HashUpdate(&state, vi.UL);
-	HashUpdate(&state, vu.ACC);
-	HashUpdate(&state, vu.q.UL);
-	HashUpdate(&state, vu.p.UL);
-	HashUpdate(&state, vu.micro_macflags);
-	HashUpdate(&state, vu.micro_clipflags);
-	HashUpdate(&state, vu.micro_statusflags);
-	HashUpdate(&state, vu.macflag);
-	HashUpdate(&state, vu.statusflag);
-	HashUpdate(&state, vu.clipflag);
-	return XXH3_64bits_digest(&state);
-}
-
-static u64 HashVUMemory()
-{
-	XXH3_state_t state;
-	XXH3_64bits_reset(&state);
-	HashUpdate(&state, VU0.Micro, VU0_PROGSIZE);
-	HashUpdate(&state, VU0.Mem, VU0_MEMSIZE);
-	HashUpdate(&state, VU1.Micro, VU1_PROGSIZE);
-	HashUpdate(&state, VU1.Mem, VU1_MEMSIZE);
-	return XXH3_64bits_digest(&state);
 }
 
 static std::optional<u64> HashFile(const std::string& path)
@@ -532,29 +412,13 @@ void Host::OnVSyncTrace()
 	const u32 frame = g_FrameCount;
 
 	if (s_cpu_file)
+		std::fputs(TraceHash::FormatCPURecord(frame, s_trace_ram_every).c_str(), s_cpu_file);
+
+	if (s_audio_file)
 	{
-		std::string line = fmt::format("{{\"frame\":{},\"ee\":\"{}\",\"iop\":\"{}\",\"vu0\":\"{}\",\"vu1\":\"{}\"", frame,
-			HashToString(HashEE()), HashToString(HashIOP()), HashToString(HashVU(VU0)), HashToString(HashVU(VU1)));
-
-		if (s_trace_ram_every > 0 && (frame % s_trace_ram_every) == 0)
-		{
-			line += fmt::format(",\"eeram\":\"{}\",\"iopram\":\"{}\",\"vumem\":\"{}\",\"spu2ram\":\"{}\"",
-				HashToString(XXH3_64bits(eeMem->Main, Ps2MemSize::MainRam)),
-				HashToString(XXH3_64bits(iopMem->Main, Ps2MemSize::IopRam)),
-				HashToString(HashVUMemory()),
-				HashToString(XXH3_64bits(_spu2mem, sizeof(_spu2mem))));
-		}
-
-		line += "}\n";
-		std::fputs(line.c_str(), s_cpu_file);
-	}
-
-	if (s_audio_file && s_trace_audio_stream)
-	{
-		const u32 num_frames = s_trace_audio_stream->Drain(s_audio_samples);
-		const u64 hash = XXH3_64bits(s_audio_samples.data(), s_audio_samples.size() * sizeof(AudioStream::SampleType));
-		std::fputs(fmt::format("{{\"frame\":{},\"frames\":{},\"hash\":\"{}\"}}\n", frame, num_frames, HashToString(hash)).c_str(),
-			s_audio_file);
+		const std::string line = TraceHash::FormatAudioRecord(frame);
+		if (!line.empty())
+			std::fputs(line.c_str(), s_audio_file);
 	}
 
 	if (s_frame_limit > 0 && (frame + 1) >= s_frame_limit && VMManager::GetState() == VMState::Running)
@@ -1211,7 +1075,7 @@ bool TraceRunner::WriteManifest()
 	json += "],\n";
 	json += fmt::format("  \"input\": {},\n", s_input_path.empty() ? "null" : JsonString(s_input_path));
 	json += fmt::format("  \"image\": {{\"path\": {}, \"elf\": {}, \"xxh3\": {}}},\n", JsonString(s_image_path),
-		VMManager::IsElfFileName(s_image_path) ? "true" : "false", JsonString(HashToString(image_hash.value())));
+		VMManager::IsElfFileName(s_image_path) ? "true" : "false", JsonString(TraceHash::HashToString(image_hash.value())));
 	json += fmt::format("  \"bios\": {},\n", s_bios_dir.empty() ? "null" : JsonString(s_bios_dir));
 	json += fmt::format("  \"pcsx2\": {{\"rev\": {}, \"hash\": {}}},\n", JsonString(GIT_REV), JsonString(GIT_HASH));
 	json += fmt::format("  \"adapter\": {},\n", JsonString(adapter));
@@ -1317,7 +1181,7 @@ int main(int argc, char* argv[])
 	TraceRunner::ApplyUserSettings();
 
 	if (s_audio_hash)
-		AudioStream::SetNullStreamFactory(TraceRunner::CreateTraceAudioStream);
+		AudioStream::SetNullStreamFactory(TraceHash::CreateAudioStream);
 
 	std::atomic<int> thread_ret;
 	std::thread cputhread(CPUThreadMain, &params, &thread_ret);
