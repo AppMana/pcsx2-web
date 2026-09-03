@@ -8,6 +8,13 @@
 #include "common/Pcsx2Defs.h"
 #include "common/VectorIntrin.h"
 
+// wasm32 has no control register: the mode lives in a thread-local shadow and the interpreters
+// apply it in software (common/Wasm/FloatMode.h). PCSX2_SOFT_FLOAT_MODE selects the same shadow
+// and software path on x86 so that the emulation can be verified against the hardware one.
+#if defined(ARCH_WASM32) && !defined(PCSX2_SOFT_FLOAT_MODE)
+#define PCSX2_SOFT_FLOAT_MODE 1
+#endif
+
 enum class FPRoundMode : u8
 {
 	Nearest,
@@ -30,6 +37,10 @@ struct FPControlRegister
 	static constexpr u32 DENORMALS_ARE_ZERO_BIT = (1u << 6);
 	static constexpr u32 FLUSH_TO_ZERO_BIT = (1u << 15);
 
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	static FPControlRegister GetCurrent();
+	static void SetCurrent(FPControlRegister value);
+#else
 	__fi static FPControlRegister GetCurrent()
 	{
 		return FPControlRegister{_mm_getcsr()};
@@ -39,6 +50,7 @@ struct FPControlRegister
 	{
 		_mm_setcsr(value.bitmask);
 	}
+#endif
 
 	__fi static constexpr FPControlRegister GetDefault()
 	{
@@ -262,6 +274,21 @@ struct FPControlRegister
 #error Unknown architecture.
 #endif
 };
+
+#if defined(ARCH_X86) && defined(PCSX2_SOFT_FLOAT_MODE)
+// MXCSR stays at the process default (nearest, denormals enabled); only the shadow changes.
+inline thread_local FPControlRegister g_soft_fpcr = FPControlRegister::GetDefault();
+
+inline FPControlRegister FPControlRegister::GetCurrent()
+{
+	return g_soft_fpcr;
+}
+
+inline void FPControlRegister::SetCurrent(FPControlRegister value)
+{
+	g_soft_fpcr = value;
+}
+#endif
 
 /// Helper to back up/restore FPCR.
 class FPControlRegisterBackup

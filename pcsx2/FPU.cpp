@@ -3,6 +3,8 @@
 
 #include "Common.h"
 
+#include "common/Wasm/FloatMode.h"
+
 #include <cmath>
 
 // Helper Macros
@@ -182,19 +184,41 @@ float fpuDouble(u32 f)
 	}
 }
 
+// Host arithmetic under the EE FPU control register: the hardware MXCSR/FPCR natively, the
+// software emulation where the host cannot set one.
+#ifdef PCSX2_SOFT_FLOAT_MODE
+static __fi float fpuAdd(float a, float b) { return SoftFloat::Add(a, b, FPControlRegister::GetCurrent()); }
+static __fi float fpuSub(float a, float b) { return SoftFloat::Sub(a, b, FPControlRegister::GetCurrent()); }
+static __fi float fpuMul(float a, float b) { return SoftFloat::Mul(a, b, FPControlRegister::GetCurrent()); }
+static __fi float fpuDiv(float a, float b) { return SoftFloat::Div(a, b, FPControlRegister::GetCurrent()); }
+static __fi float fpuSqrt(float a) { return SoftFloat::Sqrt(a, FPControlRegister::GetCurrent()); }
+static __fi float fpuDivBySqrt(float a, float b) { return SoftFloat::DivBySqrtDouble(a, b, FPControlRegister::GetCurrent()); }
+static __fi float fpuFromInt(s32 v) { return SoftFloat::FromInt(v, FPControlRegister::GetCurrent()); }
+// The native build contracts ACC += a * b into an FMA (-ffp-contract=fast), so it rounds once.
+static __fi float fpuFma(float a, float b, float c) { return SoftFloat::Fma(a, b, c, FPControlRegister::GetCurrent()); }
+#else
+static __fi float fpuAdd(float a, float b) { return a + b; }
+static __fi float fpuSub(float a, float b) { return a - b; }
+static __fi float fpuMul(float a, float b) { return a * b; }
+static __fi float fpuDiv(float a, float b) { return a / b; }
+static __fi float fpuSqrt(float a) { return static_cast<float>(sqrt(static_cast<double>(a))); }
+static __fi float fpuDivBySqrt(float a, float b) { return static_cast<float>(static_cast<double>(a) / sqrt(static_cast<double>(b))); }
+static __fi float fpuFromInt(s32 v) { return (float)v; }
+#endif
+
 void ABS_S() {
 	_FdValUl_ = _FsValUl_ & 0x7fffffff;
 	clearFPUFlags( FPUflagO | FPUflagU );
 }
 
 void ADD_S() {
-	_FdValf_  = fpuDouble( _FsValUl_ ) + fpuDouble( _FtValUl_ );
+	_FdValf_  = fpuAdd( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FdValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FdValUl_, FPUflagU | FPUflagSU);
 }
 
 void ADDA_S() {
-	_FAValf_  = fpuDouble( _FsValUl_ ) + fpuDouble( _FtValUl_ );
+	_FAValf_  = fpuAdd( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }
@@ -248,7 +272,7 @@ void CTC1() {
 }
 
 void CVT_S() {
-	_FdValf_ = (float)_FsValSl_;
+	_FdValf_ = fpuFromInt( _FsValSl_ );
 }
 
 void CVT_W() {
@@ -259,7 +283,7 @@ void CVT_W() {
 
 void DIV_S() {
 	if (checkDivideByZero( _FdValUl_, _FtValUl_, _FsValUl_, FPUflagD | FPUflagSD, FPUflagI | FPUflagSI)) return;
-	_FdValf_ = fpuDouble( _FsValUl_ ) / fpuDouble( _FtValUl_ );
+	_FdValf_ = fpuDiv( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FdValUl_, 0)) return;
 	checkUnderflow( _FdValUl_, 0);
 }
@@ -270,14 +294,18 @@ void DIV_S() {
 */
 void MADD_S() {
 	FPRreg temp;
-	temp.f = fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
-	_FdValf_  = fpuDouble( _FAValUl_ ) + fpuDouble( temp.UL );
+	temp.f = fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
+	_FdValf_  = fpuAdd( fpuDouble( _FAValUl_ ), fpuDouble( temp.UL ) );
 	if (checkOverflow( _FdValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FdValUl_, FPUflagU | FPUflagSU);
 }
 
 void MADDA_S() {
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	_FAValf_ = fpuFma( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ), _FAValf_ );
+#else
 	_FAValf_ += fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
+#endif
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }
@@ -303,14 +331,18 @@ void MOV_S() {
 
 void MSUB_S() {
 	FPRreg temp;
-	temp.f = fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
-	_FdValf_  = fpuDouble( _FAValUl_ ) - fpuDouble( temp.UL );
+	temp.f = fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
+	_FdValf_  = fpuSub( fpuDouble( _FAValUl_ ), fpuDouble( temp.UL ) );
 	if (checkOverflow( _FdValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FdValUl_, FPUflagU | FPUflagSU);
 }
 
 void MSUBA_S() {
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	_FAValf_ = fpuFma( -fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ), _FAValf_ );
+#else
 	_FAValf_ -= fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
+#endif
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }
@@ -320,13 +352,13 @@ void MTC1() {
 }
 
 void MUL_S() {
-	_FdValf_  = fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
+	_FdValf_  = fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FdValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FdValUl_, FPUflagU | FPUflagSU);
 }
 
 void MULA_S() {
-	_FAValf_  = fpuDouble( _FsValUl_ ) * fpuDouble( _FtValUl_ );
+	_FAValf_  = fpuMul( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }
@@ -347,10 +379,10 @@ void RSQRT_S() {
 	}
 	else if ( _FtValUl_ & 0x80000000 ) { // Ft is negative
 		_ContVal_ |= FPUflagI | FPUflagSI;
-		temp.f = sqrt( fabs( fpuDouble( _FtValUl_ ) ) );
-		_FdValf_ = fpuDouble( _FsValUl_ ) / fpuDouble( temp.UL );
+		temp.f = fpuSqrt( fabs( fpuDouble( _FtValUl_ ) ) );
+		_FdValf_ = fpuDiv( fpuDouble( _FsValUl_ ), fpuDouble( temp.UL ) );
 	}
-	else { _FdValf_ = fpuDouble( _FsValUl_ ) / sqrt( fpuDouble( _FtValUl_ ) ); } // Ft is positive and not zero
+	else { _FdValf_ = fpuDivBySqrt( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) ); } // Ft is positive and not zero
 
 	if (checkOverflow( _FdValUl_, 0)) return;
 	checkUnderflow( _FdValUl_, 0);
@@ -363,19 +395,19 @@ void SQRT_S() {
 		_FdValUl_ = _FtValUl_ & 0x80000000;// result is 0
 	else if ( _FtValUl_ & 0x80000000 ) { // If Ft is Negative
 		_ContVal_ |= FPUflagI | FPUflagSI;
-		_FdValf_ = sqrt( fabs( fpuDouble( _FtValUl_ ) ) );
+		_FdValf_ = fpuSqrt( fabs( fpuDouble( _FtValUl_ ) ) );
 	} else
-		_FdValf_ = sqrt( fpuDouble( _FtValUl_ ) ); // If Ft is Positive
+		_FdValf_ = fpuSqrt( fpuDouble( _FtValUl_ ) ); // If Ft is Positive
 }
 
 void SUB_S() {
-	_FdValf_  = fpuDouble( _FsValUl_ ) - fpuDouble( _FtValUl_ );
+	_FdValf_  = fpuSub( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FdValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FdValUl_, FPUflagU | FPUflagSU);
 }
 
 void SUBA_S() {
-	_FAValf_  = fpuDouble( _FsValUl_ ) - fpuDouble( _FtValUl_ );
+	_FAValf_  = fpuSub( fpuDouble( _FsValUl_ ), fpuDouble( _FtValUl_ ) );
 	if (checkOverflow( _FAValUl_, FPUflagO | FPUflagSO)) return;
 	checkUnderflow( _FAValUl_, FPUflagU | FPUflagSU);
 }

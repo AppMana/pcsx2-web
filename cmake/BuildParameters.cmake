@@ -47,6 +47,10 @@ endif()
 # Compiler extra
 #-------------------------------------------------------------------------------
 option(USE_ASAN "Enable address sanitizer")
+option(PCSX2_SOFT_FLOAT_MODE "Interpreters apply the EE/VU rounding and denormal modes in software with MXCSR left at nearest, as the wasm32 build does. Verification only." OFF)
+if(PCSX2_SOFT_FLOAT_MODE)
+	list(APPEND PCSX2_DEFS PCSX2_SOFT_FLOAT_MODE=1)
+endif()
 
 #-------------------------------------------------------------------------------
 # Browser (Emscripten) build

@@ -8,6 +8,8 @@
 
 #include "VUmicro.h"
 
+#include "common/Wasm/FloatMode.h"
+
 /*****************************************/
 /*          NEW FLAGS                    */ //By asadr. Thnkx F|RES :p
 /*****************************************/
@@ -23,7 +25,11 @@ static __ri u32 VU_MAC_UPDATE( int shift, VURegs * VU, float f )
 	else
 		VU->macflag &= ~(0x0010<<shift);
 
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	if (SoftFloat::IsZero(f, FPControlRegister::GetCurrent()))
+#else
 	if( f == 0 )
+#endif
 	{
 		VU->macflag = (VU->macflag & ~(0x1100<<shift)) | (0x0001<<shift);
 		return v;

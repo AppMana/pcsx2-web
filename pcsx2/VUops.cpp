@@ -7,6 +7,8 @@
 #include "Gif_Unit.h"
 #include "MTVU.h"
 
+#include "common/Wasm/FloatMode.h"
+
 #include <cmath>
 u32 laststall = 0;
 //Lower/Upper instructions can use that..
@@ -462,6 +464,27 @@ static __fi float vuDouble(u32 f)
 }
 #endif
 
+// Host arithmetic under the VU control register: the hardware MXCSR/FPCR natively, the software
+// emulation where the host cannot set one.
+#ifdef PCSX2_SOFT_FLOAT_MODE
+static __fi float vuAdd(float a, float b) { return SoftFloat::Add(a, b, FPControlRegister::GetCurrent()); }
+static __fi float vuSub(float a, float b) { return SoftFloat::Sub(a, b, FPControlRegister::GetCurrent()); }
+static __fi float vuMul(float a, float b) { return SoftFloat::Mul(a, b, FPControlRegister::GetCurrent()); }
+static __fi float vuDiv(float a, float b) { return SoftFloat::Div(a, b, FPControlRegister::GetCurrent()); }
+static __fi float vuSqrt(float a) { return SoftFloat::Sqrt(a, FPControlRegister::GetCurrent()); }
+static __fi float vuFromInt(s32 v) { return SoftFloat::FromInt(v, FPControlRegister::GetCurrent()); }
+// The native build contracts acc + fs * ft and the EFU sums of squares into FMA instructions
+// (-ffp-contract=fast with an FMA capable -march), so those round once.
+static __fi float vuFma(float a, float b, float c) { return SoftFloat::Fma(a, b, c, FPControlRegister::GetCurrent()); }
+#else
+static __fi float vuAdd(float a, float b) { return a + b; }
+static __fi float vuSub(float a, float b) { return a - b; }
+static __fi float vuMul(float a, float b) { return a * b; }
+static __fi float vuDiv(float a, float b) { return a / b; }
+static __fi float vuSqrt(float a) { return static_cast<float>(sqrt(static_cast<double>(a))); }
+static __fi float vuFromInt(s32 v) { return static_cast<float>(v); }
+#endif
+
 static __fi float vuADD_TriAceHack(u32 a, u32 b)
 {
 	// On VU0 TriAce Games use ADDi and expects these bit-perfect results:
@@ -485,7 +508,7 @@ static __fi float vuADD_TriAceHack(u32 a, u32 b)
 	s32 bExp = (b >> 23) & 0xff;
 	if (aExp - bExp >= 25) b &= 0x80000000;
 	if (aExp - bExp <=-25) a &= 0x80000000;
-	float ret = vuDouble(a) + vuDouble(b);
+	float ret = vuAdd(vuDouble(a), vuDouble(b));
 	//DevCon.WriteLn("aExp = %d, bExp = %d", aExp, bExp);
 	//DevCon.WriteLn("0x%08x + 0x%08x = 0x%08x", a, b, (u32&)ret);
 	//DevCon.WriteLn("%f + %f = %f", vuDouble(a), vuDouble(b), ret);
@@ -551,7 +574,7 @@ static __fi void applyBinaryMACOpBroadcast(VURegs* VU, u32 bc)
 
 static __fi float _vuOpADD(u32 fs, u32 ft)
 {
-	return vuDouble(fs) + vuDouble(ft);
+	return vuAdd(vuDouble(fs), vuDouble(ft));
 }
 
 static __fi void _vuADD(VURegs* VU)
@@ -602,7 +625,7 @@ static __fi void _vuADDAw(VURegs* VU) { vuADDAbc(VU, VU->VF[_Ft_].i.w); }
 
 static __fi float _vuOpSUB(u32 fs, u32 ft)
 {
-	return vuDouble(fs) - vuDouble(ft);
+	return vuSub(vuDouble(fs), vuDouble(ft));
 }
 
 static __fi void _vuSUB(VURegs* VU)
@@ -641,7 +664,7 @@ static __fi void _vuSUBAw(VURegs* VU) { vuSUBAbc(VU, VU->VF[_Ft_].i.w); }
 
 static __fi float _vuOpMUL(u32 fs, u32 ft)
 {
-	return vuDouble(fs) * vuDouble(ft);
+	return vuMul(vuDouble(fs), vuDouble(ft));
 }
 
 static __fi void _vuMUL(VURegs* VU)
@@ -703,7 +726,11 @@ static __fi void applyTernaryMACOpBroadcast(VURegs* VU, u32 bc)
 
 static __fi float _vuOpMADD(u32 acc, u32 fs, u32 ft)
 {
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	return vuFma(vuDouble(fs), vuDouble(ft), vuDouble(acc));
+#else
 	return vuDouble(acc) + vuDouble(fs) * vuDouble(ft);
+#endif
 }
 
 static __fi void _vuMADD(VURegs* VU)
@@ -742,7 +769,11 @@ static __fi void _vuMADDAw(VURegs* VU) { vuMADDAbc(VU, VU->VF[_Ft_].i.w); }
 
 static __fi float _vuOpMSUB(u32 acc, u32 fs, u32 ft)
 {
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	return vuFma(-vuDouble(fs), vuDouble(ft), vuDouble(acc));
+#else
 	return vuDouble(acc) - vuDouble(fs) * vuDouble(ft);
+#endif
 }
 
 static __fi void _vuMSUB(VURegs* VU)
@@ -840,9 +871,9 @@ static __fi void _vuMINIw(VURegs* VU) { applyMinMaxBroadcast<fp_min>(VU, VU->VF[
 
 static __fi void _vuOPMULA(VURegs* VU)
 {
-	VU->ACC.i.x = VU_MACx_UPDATE(VU, vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Ft_].i.z));
-	VU->ACC.i.y = VU_MACy_UPDATE(VU, vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Ft_].i.x));
-	VU->ACC.i.z = VU_MACz_UPDATE(VU, vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Ft_].i.y));
+	VU->ACC.i.x = VU_MACx_UPDATE(VU, vuMul(vuDouble(VU->VF[_Fs_].i.y), vuDouble(VU->VF[_Ft_].i.z)));
+	VU->ACC.i.y = VU_MACy_UPDATE(VU, vuMul(vuDouble(VU->VF[_Fs_].i.z), vuDouble(VU->VF[_Ft_].i.x)));
+	VU->ACC.i.z = VU_MACz_UPDATE(VU, vuMul(vuDouble(VU->VF[_Fs_].i.x), vuDouble(VU->VF[_Ft_].i.y)));
 	VU_STAT_UPDATE(VU);
 }
 
@@ -863,9 +894,15 @@ static __fi void _vuOPMSUB(VURegs* VU)
 	fsy = vuDouble(VU->VF[_Fs_].i.y);
 	fsz = vuDouble(VU->VF[_Fs_].i.z);
 
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	dst->i.x = VU_MACx_UPDATE(VU, vuFma(-fsy, ftz, vuDouble(VU->ACC.i.x)));
+	dst->i.y = VU_MACy_UPDATE(VU, vuFma(-fsz, ftx, vuDouble(VU->ACC.i.y)));
+	dst->i.z = VU_MACz_UPDATE(VU, vuFma(-fsx, fty, vuDouble(VU->ACC.i.z)));
+#else
 	dst->i.x = VU_MACx_UPDATE(VU, vuDouble(VU->ACC.i.x) - fsy * ftz);
 	dst->i.y = VU_MACy_UPDATE(VU, vuDouble(VU->ACC.i.y) - fsz * ftx);
 	dst->i.z = VU_MACz_UPDATE(VU, vuDouble(VU->ACC.i.z) - fsx * fty);
+#endif
 	VU_STAT_UPDATE(VU);
 }
 
@@ -895,7 +932,7 @@ static __fi void _vuFTOI15(VURegs* VU) { applyUnaryFunction<floatToInt<15>>(VU);
 template <u32 Offset>
 static __fi u32 intToFloat(u32 uvalue)
 {
-	float fvalue = static_cast<float>(static_cast<s32>(uvalue));
+	float fvalue = vuFromInt(static_cast<s32>(uvalue));
 	if (Offset)
 		fvalue *= std::bit_cast<float>(0x3f800000 - (Offset << 23));
 	return std::bit_cast<u32>(fvalue);
@@ -950,7 +987,7 @@ static __fi void _vuDIV(VURegs* VU)
 	}
 	else
 	{
-		VU->q.F = fs / ft;
+		VU->q.F = vuDiv(fs, ft);
 		VU->q.F = vuDouble(VU->q.UL);
 	}
 }
@@ -963,7 +1000,7 @@ static __fi void _vuSQRT(VURegs* VU)
 
 	if (ft < 0.0)
 		VU->statusflag |= 0x10;
-	VU->q.F = sqrt(fabs(ft));
+	VU->q.F = vuSqrt(fabs(ft));
 	VU->q.F = vuDouble(VU->q.UL);
 }
 
@@ -1005,8 +1042,8 @@ static __fi void _vuRSQRT(VURegs* VU)
 			VU->statusflag |= 0x10;
 		}
 
-		temp = sqrt(fabs(ft));
-		VU->q.F = fs / temp;
+		temp = vuSqrt(fabs(ft));
+		VU->q.F = vuDiv(fs, temp);
 		VU->q.F = vuDouble(VU->q.UL);
 	}
 }
@@ -1649,44 +1686,71 @@ static __ri void _vuWAITP(VURegs* VU)
 {
 }
 
+// x*x + y*y + z*z as the native build evaluates it. The compiler contracts the two additions into
+// FMAs and the order it picks differs per function: ESADD/ERSADD round y*y first, ELENG/ERLENG
+// round x*x first.
+static __fi float _vuSumOfSquaresYXZ(const VURegs* VU)
+{
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	const float x = vuDouble(VU->VF[_Fs_].i.x);
+	const float y = vuDouble(VU->VF[_Fs_].i.y);
+	const float z = vuDouble(VU->VF[_Fs_].i.z);
+	return vuFma(z, z, vuFma(x, x, vuMul(y, y)));
+#else
+	return vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
+#endif
+}
+
+static __fi float _vuSumOfSquaresXYZ(const VURegs* VU)
+{
+#ifdef PCSX2_SOFT_FLOAT_MODE
+	const float x = vuDouble(VU->VF[_Fs_].i.x);
+	const float y = vuDouble(VU->VF[_Fs_].i.y);
+	const float z = vuDouble(VU->VF[_Fs_].i.z);
+	return vuFma(z, z, vuFma(y, y, vuMul(x, x)));
+#else
+	return vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
+#endif
+}
+
 static __ri void _vuESADD(VURegs* VU)
 {
-	float p = vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
+	float p = _vuSumOfSquaresYXZ(VU);
 
 	VU->p.F = p;
 }
 
 static __ri void _vuERSADD(VURegs* VU)
 {
-	float p = (vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x)) + (vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y)) + (vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z));
+	float p = _vuSumOfSquaresYXZ(VU);
 
 	if (p != 0.0)
-		p = 1.0f / p;
+		p = vuDiv(1.0f, p);
 
 	VU->p.F = p;
 }
 
 static __ri void _vuELENG(VURegs* VU)
 {
-	float p = vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
+	float p = _vuSumOfSquaresXYZ(VU);
 
 	if (p >= 0)
 	{
-		p = sqrt(p);
+		p = vuSqrt(p);
 	}
 	VU->p.F = p;
 }
 
 static __ri void _vuERLENG(VURegs* VU)
 {
-	float p = vuDouble(VU->VF[_Fs_].i.x) * vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) * vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) * vuDouble(VU->VF[_Fs_].i.z);
+	float p = _vuSumOfSquaresXYZ(VU);
 
 	if (p >= 0)
 	{
-		p = sqrt(p);
+		p = vuSqrt(p);
 		if (p != 0)
 		{
-			p = 1.0f / p;
+			p = vuDiv(1.0f, p);
 		}
 	}
 	VU->p.F = p;
@@ -1720,7 +1784,7 @@ static __ri void _vuEATANxy(VURegs* VU)
 	float p = 0;
 	if (vuDouble(VU->VF[_Fs_].i.x) != 0)
 	{
-		p = _vuCalculateEATAN(vuDouble(VU->VF[_Fs_].i.y) / vuDouble(VU->VF[_Fs_].i.x));
+		p = _vuCalculateEATAN(vuDiv(vuDouble(VU->VF[_Fs_].i.y), vuDouble(VU->VF[_Fs_].i.x)));
 	}
 	VU->p.F = p;
 }
@@ -1730,14 +1794,14 @@ static __ri void _vuEATANxz(VURegs* VU)
 	float p = 0;
 	if (vuDouble(VU->VF[_Fs_].i.x) != 0)
 	{
-		p = _vuCalculateEATAN(vuDouble(VU->VF[_Fs_].i.z) / vuDouble(VU->VF[_Fs_].i.x));
+		p = _vuCalculateEATAN(vuDiv(vuDouble(VU->VF[_Fs_].i.z), vuDouble(VU->VF[_Fs_].i.x)));
 	}
 	VU->p.F = p;
 }
 
 static __ri void _vuESUM(VURegs* VU)
 {
-	float p = vuDouble(VU->VF[_Fs_].i.x) + vuDouble(VU->VF[_Fs_].i.y) + vuDouble(VU->VF[_Fs_].i.z) + vuDouble(VU->VF[_Fs_].i.w);
+	float p = vuAdd(vuAdd(vuAdd(vuDouble(VU->VF[_Fs_].i.x), vuDouble(VU->VF[_Fs_].i.y)), vuDouble(VU->VF[_Fs_].i.z)), vuDouble(VU->VF[_Fs_].i.w));
 	VU->p.F = p;
 }
 
@@ -1747,7 +1811,7 @@ static __ri void _vuERCPR(VURegs* VU)
 
 	if (p != 0)
 	{
-		p = 1.0 / p;
+		p = vuDiv(1.0f, p);
 	}
 
 	VU->p.F = p;
@@ -1759,7 +1823,7 @@ static __ri void _vuESQRT(VURegs* VU)
 
 	if (p >= 0)
 	{
-		p = sqrt(p);
+		p = vuSqrt(p);
 	}
 
 	VU->p.F = p;
@@ -1771,10 +1835,10 @@ static __ri void _vuERSQRT(VURegs* VU)
 
 	if (p >= 0)
 	{
-		p = sqrt(p);
+		p = vuSqrt(p);
 		if (p)
 		{
-			p = 1.0f / p;
+			p = vuDiv(1.0f, p);
 		}
 	}
 
@@ -1799,7 +1863,7 @@ static __ri void _vuEEXP(VURegs* VU)
 	p = 1.0f + (consts[0] * p) + (consts[1] * pow(p, 2)) + (consts[2] * pow(p, 3)) + (consts[3] * pow(p, 4)) + (consts[4] * pow(p, 5)) + (consts[5] * pow(p, 6));
 	p = pow(p, 4);
 	p = vuDouble(*(u32*)&p);
-	p = 1 / p;
+	p = vuDiv(1.0f, p);
 
 	VU->p.F = p;
 }

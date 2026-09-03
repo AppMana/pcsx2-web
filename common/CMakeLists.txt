@@ -49,6 +49,7 @@ target_sources(common PRIVATE
 	EnumOps.h
 	Error.h
 	FPControl.h
+	Wasm/FloatMode.h
 	FastJmp.h
 	FileSystem.h
 	HashCombine.h
@@ -158,7 +159,6 @@ elseif(APPLE)
 	)
 elseif(EMSCRIPTEN)
 	target_sources(common PRIVATE
-		Wasm/FloatMode.h
 		Wasm/WasmHostSys.cpp
 		Wasm/WasmThreads.cpp
 		Wasm/WasmMisc.cpp
