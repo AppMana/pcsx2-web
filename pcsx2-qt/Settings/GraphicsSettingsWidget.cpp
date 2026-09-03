@@ -35,6 +35,10 @@ static constexpr RendererInfo s_renderer_info[] = {
 	//: Graphics backend/engine type. Leave as-is.
 	{QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "Vulkan"), GSRendererType::VK},
 #endif
+#ifdef ENABLE_WEBGPU
+	//: Graphics backend/engine type. Leave as-is.
+	{QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "WebGPU"), GSRendererType::WebGPU},
+#endif
 #ifdef __APPLE__
 	//: Graphics backend/engine type. Leave as-is.
 	{QT_TRANSLATE_NOOP("GraphicsSettingsWidget", "Metal"), GSRendererType::Metal},

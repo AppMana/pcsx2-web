@@ -682,6 +682,10 @@ bool GSRunner::ParseCommandLineArgs(int argc, char* argv[], VMBootParameters& pa
 				else if (StringUtil::Strcasecmp(rname, "vulkan") == 0)
 					type = GSRendererType::VK;
 #endif
+#ifdef ENABLE_WEBGPU
+				else if (StringUtil::Strcasecmp(rname, "webgpu") == 0)
+					type = GSRendererType::WebGPU;
+#endif
 #ifdef __APPLE__
 				else if (StringUtil::Strcasecmp(rname, "metal") == 0)
 					type = GSRendererType::Metal;
