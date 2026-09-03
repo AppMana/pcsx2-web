@@ -720,6 +720,7 @@ static void PrintCommandLineHelp(const char* progname)
 	std::fprintf(stderr, "  -version: Displays version information and exits.\n");
 	std::fprintf(stderr, "  -bios <dir>: Directory containing the BIOS image.\n");
 	std::fprintf(stderr, "  -renderer <sw|vulkan|null>: Sets the graphics renderer. Defaults to Auto.\n");
+	std::fprintf(stderr, "  -nulldevice: Runs the software renderer on the null GS device (no GPU, nothing is presented).\n");
 	std::fprintf(stderr, "  -cpu <interpreter|recompiler>: Sets the EE/IOP/VU execution mode. Defaults to interpreter.\n");
 	std::fprintf(stderr, "  -frames <count>: Stops after this many vsyncs.\n");
 	std::fprintf(stderr, "  -input <file.p2m2>: Replays an input recording from power on.\n");
@@ -832,6 +833,12 @@ bool TraceRunner::ParseCommandLineArgs(int argc, char* argv[], VMBootParameters&
 				s_renderer_name = Pcsx2Config::GSOptions::GetRendererName(type);
 				Console.WriteLn("Using %s renderer.", s_renderer_name.c_str());
 				SetIntSetting("EmuCore/GS", "Renderer", static_cast<int>(type));
+				continue;
+			}
+			else if (CHECK_ARG("-nulldevice"))
+			{
+				Console.WriteLn("Using null GS device.");
+				SetBoolSetting("EmuCore/GS", "NullDevice", true);
 				continue;
 			}
 			else if (CHECK_ARG_PARAM("-cpu"))

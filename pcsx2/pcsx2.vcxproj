@@ -359,7 +359,9 @@
     <ClCompile Include="GS\Renderers\Common\GSRenderer.cpp" />
     <ClCompile Include="GS\Renderers\HW\GSRendererHW.cpp" />
     <ClCompile Include="GS\Renderers\HW\GSRendererHWMultiISA.cpp" />
+    <ClCompile Include="GS\Renderers\Null\GSDeviceNull.cpp" />
     <ClCompile Include="GS\Renderers\Null\GSRendererNull.cpp" />
+    <ClCompile Include="GS\Renderers\Null\GSTextureNull.cpp" />
     <ClCompile Include="GS\Renderers\SW\GSRendererSW.cpp" />
     <ClCompile Include="GS\Renderers\SW\GSSetupPrimCodeGenerator.all.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
@@ -799,7 +801,9 @@
     <ClInclude Include="GS\Renderers\SW\GSRasterizer.h" />
     <ClInclude Include="GS\Renderers\Common\GSRenderer.h" />
     <ClInclude Include="GS\Renderers\HW\GSRendererHW.h" />
+    <ClInclude Include="GS\Renderers\Null\GSDeviceNull.h" />
     <ClInclude Include="GS\Renderers\Null\GSRendererNull.h" />
+    <ClInclude Include="GS\Renderers\Null\GSTextureNull.h" />
     <ClInclude Include="GS\Renderers\SW\GSRendererSW.h" />
     <ClInclude Include="GS\Renderers\SW\GSScanlineEnvironment.h" />
     <ClInclude Include="GS\Renderers\SW\GSSetupPrimCodeGenerator.all.h">
