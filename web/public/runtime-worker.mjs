@@ -26,6 +26,10 @@ const inputTrace = [];
 /** @type {unknown[]} */
 let events = [];
 let traceSupported = false;
+// pcsx2_web_set_frame_limit stops the VM at the requested vsync count on the
+// CPU thread, exactly where a tracerunner recording ends; without it the VM
+// runs until the stop request lands.
+let frameLimitArmed = false;
 /** @type {Uint8Array[]} */
 let traceChunks = [];
 const tty = new TtyDecoder();
@@ -302,6 +306,11 @@ async function boot(request) {
       if (result !== 0) throw new Error(`pcsx2_web_trace_enable returned ${result}`);
     }
     frameCounterAddress = module._pcsx2_web_frame_count_address() >>> 0;
+    if (hasExport("pcsx2_web_set_frame_limit")) {
+      const result = module._pcsx2_web_set_frame_limit(frames) | 0;
+      if (result !== 0) throw new Error(`pcsx2_web_set_frame_limit returned ${result}`);
+      frameLimitArmed = true;
+    }
     if (request.pad) applyPad(0, request.pad);
 
     stage = "boot";
@@ -335,11 +344,24 @@ async function boot(request) {
         progress();
       }
       const code = status();
+      if (frameLimitArmed && (code === STATUS.Stopping || code === STATUS.Idle)) {
+        // The host reached the frame limit; the remaining presents are flushed by the shutdown.
+        if (code === STATUS.Idle) {
+          pump();
+          observedFrames = Math.max(observedFrames, Math.min(frames, frameCount()));
+          break;
+        }
+        continue;
+      }
       if (code !== STATUS.Running && code !== STATUS.Paused && observedFrames < frames) {
         throw new Error(`VM left the running state at frame ${observedFrames}/${frames} (${statusName(code)})`);
       }
     }
-    ok = observedFrames >= frames;
+    if (frameLimitArmed && !stopRequested && observedFrames >= frames) {
+      // Let the host stop on its own limit so the console output ends where the oracle's does.
+      await waitForStatus((code) => code === STATUS.Idle || code === STATUS.BootFailed || code === STATUS.CPUThreadFailed, Math.max(1_000, deadline - performance.now()));
+    }
+    ok = observedFrames >= frames || (frameLimitArmed && status() === STATUS.Idle);
     if (!ok) failure = `stopped at frame ${observedFrames}/${frames}`;
   } catch (error) {
     failure = `${stage}: ${error instanceof Error ? error.message : String(error)}`;

@@ -101,6 +101,9 @@ namespace WebHost
 	// cpu.jsonl and audio.jsonl records, appended at every vsync and drained by pcsx2_web_trace_read.
 	static std::atomic<u32> s_trace_mask{0};
 	static std::atomic<u32> s_trace_ram_every{0};
+
+	// Stops the VM at this many vsyncs, the way pcsx2-tracerunner's -frames does (0 = never).
+	static std::atomic<u32> s_frame_limit{0};
 	static std::mutex s_trace_mutex;
 	static std::string s_trace_buffer;
 
@@ -424,6 +427,17 @@ EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_enable(int mask, int ram_every)
 	return 0;
 }
 
+// Stops the VM once frames vsyncs have run, so that the traced records and the console output
+// end exactly where a tracerunner recording with -frames <frames> ends. 0 removes the limit.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_set_frame_limit(int frames)
+{
+	if (frames < 0)
+		return 1;
+
+	WebHost::s_frame_limit.store(static_cast<u32>(frames), std::memory_order_release);
+	return 0;
+}
+
 EMSCRIPTEN_KEEPALIVE int pcsx2_web_trace_read(char* buffer, int buffer_size)
 {
 	if (!buffer || buffer_size <= 0)
@@ -571,22 +585,26 @@ void Host::OnVMStarted()
 
 void Host::OnVSyncTrace()
 {
-	const u32 mask = WebHost::s_trace_mask.load(std::memory_order_acquire);
-	if (mask == 0)
-		return;
-
 	const u32 frame = g_FrameCount;
-	std::string records;
-	if (mask & WebHost::TraceCPU)
-		records += TraceHash::FormatCPURecord(frame, WebHost::s_trace_ram_every.load(std::memory_order_acquire));
-	if (mask & WebHost::TraceAudio)
-		records += TraceHash::FormatAudioRecord(frame);
-
-	if (!records.empty())
+	const u32 mask = WebHost::s_trace_mask.load(std::memory_order_acquire);
+	if (mask != 0)
 	{
-		std::lock_guard lock(WebHost::s_trace_mutex);
-		WebHost::s_trace_buffer += records;
+		std::string records;
+		if (mask & WebHost::TraceCPU)
+			records += TraceHash::FormatCPURecord(frame, WebHost::s_trace_ram_every.load(std::memory_order_acquire));
+		if (mask & WebHost::TraceAudio)
+			records += TraceHash::FormatAudioRecord(frame);
+
+		if (!records.empty())
+		{
+			std::lock_guard lock(WebHost::s_trace_mutex);
+			WebHost::s_trace_buffer += records;
+		}
 	}
+
+	const u32 frame_limit = WebHost::s_frame_limit.load(std::memory_order_acquire);
+	if (frame_limit > 0 && (frame + 1) >= frame_limit && VMManager::GetState() == VMState::Running)
+		VMManager::SetState(VMState::Stopping);
 }
 
 void Host::OnVMDestroyed()
