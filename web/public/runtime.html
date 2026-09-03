@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PCSX2 wasm runtime acceptance</title>
+    <style>
+      body { margin: 0; padding: 16px; color: #eee; background: #181818; font: 13px ui-monospace, monospace; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <h1>PCSX2 wasm runtime acceptance</h1>
+    <p>Drive <code>window.__pcsx2Runtime.run(target, options)</code> from a test runner or the console. A BIOS must be imported on <a href="./storage.html">storage.html</a> first.</p>
+    <canvas id="gpu-output" width="640" height="448" aria-label="PCSX2 output"></canvas>
+    <pre id="status">loading</pre>
+    <pre id="result">idle</pre>
+    <script type="module" src="./runtime-acceptance.mjs"></script>
+  </body>
+</html>
