@@ -37,8 +37,10 @@ describe("fixture test.toml", () => {
 
   it("discovers every fixture with its recorded oracle outputs", () => {
     const fixtures = discoverFixtures(fixturesRoot);
-    expect(fixtures.map((fixture) => fixture.name)).toEqual(["gs_blend", "gs_sprite", "hello_tty", "pad_echo", "vu1_cube"]);
+    expect(fixtures.map((fixture) => fixture.name)).toEqual(["gs_blend", "gs_sprite", "hello_tty", "hello_tty_iso", "pad_echo", "vu1_cube"]);
     const hello = fixtures.find((fixture) => fixture.name === "hello_tty")!;
+    expect(hello.kind).toBe("elf");
+    expect(hello.images).toEqual([]);
     expect(hello.targetUrl).toBe("tests/fixtures/hello_tty/hello_tty.elf");
     expect(hello.elfPath).toBe(path.join(fixturesRoot, "hello_tty", "hello_tty.elf"));
     expect(hello.expectedTtyPath).toBe(path.join(fixturesRoot, "hello_tty", "expected", "tty.txt"));
@@ -91,6 +93,16 @@ describe("audio comparison", () => {
     const verdict = compareAudio(expected, '{"frame":0,"frames":0,"hash":"2d06800538d394c2"}\n{"frame":1,"frames":768,"hash":"ffffffffffffffff"}\n', 2);
     expect(verdict.ok).toBe(false);
     expect(verdict.reason).toMatch(/^audio\.jsonl diverges at record 2/);
+  });
+
+  it("lists a disc fixture's ISO target and its CHD against one oracle", () => {
+    const disc = discoverFixtures(fixturesRoot).find((fixture) => fixture.name === "hello_tty_iso")!;
+    expect(disc.kind).toBe("disc");
+    expect(disc.images.map((image) => image.name)).toEqual(["hello_tty.iso", "hello_tty.chd"]);
+    expect(disc.images[0]!.path).toBe(path.join(fixturesRoot, "hello_tty_iso", "hello_tty.iso"));
+    expect(disc.expectedTtyPath).toBe(path.join(fixturesRoot, "hello_tty_iso", "expected", "tty.txt"));
+    expect(disc.expectedCpuPath).toBe(path.join(fixturesRoot, "hello_tty_iso", "expected", "cpu.jsonl"));
+    expect(disc.manifest?.image).toMatchObject({ elf: false });
   });
 });
 

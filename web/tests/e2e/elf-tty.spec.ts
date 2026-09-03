@@ -16,7 +16,8 @@ import { validateReport } from "@appmana-public/web-emulator-harness/report";
 import { biosPath, ensureStoredBios, profileDir, storedBios } from "../support/bios";
 import { compareAudio, compareCpu, compareTty, discoverFixtures, inputTraceFromP2m2, summarizeRun, type CpuVerdict, type Fixture, type TtyVerdict } from "../support/fixtures";
 
-const fixtures = discoverFixtures().filter((fixture) => fixture.expectedTtyPath);
+// Disc image fixtures boot from origin-private storage in disc-boot.spec.ts.
+const fixtures = discoverFixtures().filter((fixture) => fixture.kind === "elf" && fixture.expectedTtyPath);
 const RUN_TIMEOUT_MS = Number(process.env.PCSX2_RUN_TIMEOUT_MS ?? 240_000);
 
 const test = base.extend<{}, { profile: BrowserContext }>({

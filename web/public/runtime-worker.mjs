@@ -1,9 +1,16 @@
-// Owns the PCSX2 module: creates it, stages the BIOS and the ELF in MEMFS,
-// applies settings, boots, drains host tasks and TTY on a timer, waits for
-// frames through Atomics.waitAsync on the host frame counter, and reports in
-// the kit's schema. Plain ESM loaded by URL; nothing here is bundled.
+// Owns the PCSX2 module: creates it, stages the BIOS (and an ELF) in MEMFS,
+// restores the persisted memory cards and inis from origin-private storage,
+// applies settings, boots an ELF or a disc image, drains host tasks and TTY on
+// a timer, waits for frames through Atomics.waitAsync on the host frame
+// counter, writes the memory cards and inis back, and reports in the kit's
+// schema. Plain ESM loaded by URL; nothing here is bundled.
 //
-// Messages in:  boot { coreUrl, pthreadPoolSize, bios?: { name, bytes }, elf: { name, bytes }, isDump,
+// Disc images stay in origin-private storage: the core opens "/opfs/<path>"
+// through its own OPFS thread (pcsx2/CDVD/OpfsFileReader.cpp), so nothing is
+// copied into MEMFS for them.
+//
+// Messages in:  boot { coreUrl, pthreadPoolSize, bios?: { name, bytes }, elf?: { name, bytes },
+//                     disc?: { path }, isDump,
 //                     render, renderer, gsHost, readback, captureRgba, captureEvery, captureFrames, loops,
 //                     canvas?: OffscreenCanvas, canvasSelector, canvasWidth, canvasHeight,
 //                     settings, cpu, trace, frames (0 = until stop), timeoutMs (0 = none), pad,
@@ -13,6 +20,7 @@
 // Messages out: runtime-progress, runtime-result { report }, runtime-shutdown, runtime-fatal,
 //               input-trace
 import { AUDIO_STATE_NAMES, INTERPRETER_SETTINGS, RENDERERS, STATUS, TtyDecoder, bytesToBase64, createRunReport, expandPadSchedule, mergePadState, packPadButtons, padPressureBytes, readAudioStats, rendererId, splitSettingKey, splitTraceRecords, statusName } from "./pcsx2-report.mjs";
+import { directoryFor, fileHandleAt, isNotFound, storageRoot, writeAll } from "./kit/disc-images/browser/opfs.js";
 
 const scope = /** @type {DedicatedWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
@@ -52,6 +60,117 @@ const tty = new TtyDecoder();
 /** @type {Array<{ frame: number, width: number, height: number, dumpFrame: number, dumpLoop: number, oracleFrame: number, renderMs: number, changedPixels: number, frameHash: string, rgba: Uint8Array }>} */
 let captures = [];
 let captureSupported = false;
+
+// Small state PCSX2 keeps under its data root in MEMFS, which would vanish
+// with the worker: memory cards (Folders/MemoryCards) and inis
+// (Folders/Settings). Each directory is mirrored to pcsx2/<dir>/ in
+// origin-private storage through the kit's OPFS helpers: restored whole before
+// the host initialises, written back when the VM stops, and while it runs
+// every PERSIST_INTERVAL_MS for files whose MEMFS timestamp moved (a memory
+// card save lands in MEMFS through FileMemoryCard's fwrite; polling its mtime
+// costs nothing in the core). Limits: whole files are copied, so a snapshot
+// taken between two page writes of one save is written and then overwritten by
+// the next pass; the final pass after shutdown is authoritative. The host
+// keeps its settings in memory, so inis/ is empty unless the core writes
+// something there. Savestates are not persisted.
+const DATA_ROOT = "/pcsx2";
+const PERSIST_DIRS = ["memcards", "inis"];
+const PERSIST_INTERVAL_MS = 10_000;
+/** @type {Map<string, number>} MEMFS path -> mtime (ms) at the last write-back */
+const persistedStamps = new Map();
+/** @type {{ restored: Array<{ path: string, bytes: number }>, saved: Array<{ path: string, bytes: number }>, passes: number, error?: string }} */
+const persistence = { restored: [], saved: [], passes: 0 };
+
+async function restorePersistentState() {
+  let root;
+  try {
+    root = await storageRoot();
+  } catch (error) {
+    persistence.error = `restore skipped: ${error instanceof Error ? error.message : String(error)}`;
+    return;
+  }
+  for (const dir of PERSIST_DIRS) {
+    const memfsDir = `${DATA_ROOT}/${dir}`;
+    module.FS.mkdirTree(memfsDir);
+    let directory;
+    try {
+      directory = await directoryFor(root, ["pcsx2", dir], false);
+    } catch (error) {
+      if (isNotFound(error)) continue;
+      throw error;
+    }
+    for await (const [name, handle] of directory.entries()) {
+      if (handle.kind !== "file") continue;
+      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      const target = `${memfsDir}/${name}`;
+      module.FS.writeFile(target, bytes);
+      persistedStamps.set(target, module.FS.stat(target).mtime.getTime());
+      persistence.restored.push({ path: target, bytes: bytes.byteLength });
+    }
+  }
+}
+
+// Writes MEMFS files under the persisted directories to storage; with
+// changedOnly, only those whose mtime moved since their last write-back.
+async function savePersistentState(changedOnly) {
+  const root = await storageRoot();
+  const saved = [];
+  for (const dir of PERSIST_DIRS) {
+    const memfsDir = `${DATA_ROOT}/${dir}`;
+    let names;
+    try {
+      names = module.FS.readdir(memfsDir).filter((name) => name !== "." && name !== "..");
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const source = `${memfsDir}/${name}`;
+      const stat = module.FS.stat(source);
+      if (!module.FS.isFile(stat.mode)) continue;
+      const stamp = stat.mtime.getTime();
+      if (changedOnly && persistedStamps.get(source) === stamp) continue;
+      const bytes = module.FS.readFile(source);
+      const handle = await fileHandleAt(root, `pcsx2/${dir}/${name}`, true);
+      const access = await handle.createSyncAccessHandle();
+      try {
+        writeAll(access, bytes, 0);
+        access.truncate(bytes.length);
+        access.flush();
+      } finally {
+        access.close();
+      }
+      persistedStamps.set(source, stamp);
+      saved.push({ path: `pcsx2/${dir}/${name}`, bytes: bytes.length });
+    }
+  }
+  persistence.passes += 1;
+  persistence.saved.push(...saved);
+  return saved;
+}
+
+async function persistIfPossible(changedOnly) {
+  if (!module) return [];
+  try {
+    return await savePersistentState(changedOnly);
+  } catch (error) {
+    persistence.error = `write-back failed: ${error instanceof Error ? error.message : String(error)}`;
+    pushEvent({ type: "persist-failed", detail: detail(error) });
+    return [];
+  }
+}
+
+// The sync access handle mode the core obtained for the last disc image it
+// opened from origin-private storage ("read-only" on Chrome).
+function opfsHandleMode() {
+  if (!hasExport("pcsx2_web_opfs_handle_mode")) return undefined;
+  const pointer = module._malloc(32);
+  try {
+    const count = module._pcsx2_web_opfs_handle_mode(pointer, 32) | 0;
+    return count > 0 ? module.UTF8ToString(pointer) : "";
+  } finally {
+    module._free(pointer);
+  }
+}
 
 function detail(error) {
   if (error instanceof Error) return `${error.name}: ${error.message}\n${error.stack ?? ""}`;
@@ -390,11 +509,14 @@ async function stopVm(timeoutMs = 10_000) {
   }
   pump();
   const after = status();
+  // The VM closed its memory card files during shutdown; write every persisted file back.
+  const persisted = await persistIfPossible(false);
   return {
     stoppedCleanly: stopped && after === STATUS.Idle,
     stopMs: performance.now() - startedAt,
     detail: stopped ? `${statusName(before)} -> ${statusName(after)}` : `still ${statusName(after)} after ${timeoutMs} ms`,
     workingSet: workingSet(),
+    persisted,
   };
 }
 
@@ -414,8 +536,10 @@ async function boot(request) {
   const frameRecords = [];
   let ok = false;
   let failure;
-  const elfPath = `/fixtures/${request.elf.name}`;
+  const elfPath = request.elf ? `/fixtures/${request.elf.name}` : undefined;
+  const discPath = request.disc?.path;
   const biosDir = "/pcsx2/bios";
+  let lastPersist = bootStartedAt;
   const isDump = Boolean(request.isDump);
   const renderer = rendererId({ render: request.render, renderer: request.renderer });
   const readbackMode = request.readback === "async" ? 1 : 0;
@@ -439,11 +563,18 @@ async function boot(request) {
     pushEvent({ type: "module-created", moduleCreateMs, heapBytes: module.HEAPU8.byteLength });
 
     stage = "stage-files";
+    if (!elfPath && !discPath) throw new Error("the boot request names neither an ELF nor a disc image");
     module.FS.mkdirTree(biosDir);
     if (request.bios) module.FS.writeFile(`${biosDir}/${request.bios.name}`, new Uint8Array(request.bios.bytes));
-    module.FS.mkdirTree("/fixtures");
-    module.FS.writeFile(elfPath, new Uint8Array(request.elf.bytes));
-    pushEvent({ type: "files-staged", bios: request.bios ? `${biosDir}/${request.bios.name}` : undefined, biosBytes: request.bios?.bytes.byteLength ?? 0, elf: elfPath, elfBytes: request.elf.bytes.byteLength });
+    if (elfPath) {
+      module.FS.mkdirTree("/fixtures");
+      module.FS.writeFile(elfPath, new Uint8Array(request.elf.bytes));
+    }
+    pushEvent({ type: "files-staged", bios: request.bios ? `${biosDir}/${request.bios.name}` : undefined, biosBytes: request.bios?.bytes.byteLength ?? 0, elf: elfPath, elfBytes: request.elf?.bytes.byteLength, disc: discPath });
+
+    stage = "restore";
+    await restorePersistentState();
+    pushEvent({ type: "state-restored", restored: persistence.restored, error: persistence.error });
 
     stage = "gs";
     if (request.canvas) {
@@ -521,7 +652,9 @@ async function boot(request) {
     if (request.audio) await attachAudio(coreUrl, Math.min(30_000, deadline - performance.now()));
 
     stage = "boot";
-    bootResult = module.ccall("pcsx2_web_boot", "number", ["string", "string"], [elfPath, isDump ? "" : elfPath]) | 0;
+    // An ELF boots as the ELF override of an empty CDVD; a disc image boots through the BIOS
+    // and a GS dump replays without either.
+    bootResult = module.ccall("pcsx2_web_boot", "number", ["string", "string"], [discPath ?? elfPath, discPath || isDump ? "" : elfPath]) | 0;
     if (bootResult !== 0) throw new Error(`pcsx2_web_boot returned ${bootResult}`);
     const started = await waitForStatus((code) => code === STATUS.Running || code === STATUS.Paused || code === STATUS.BootFailed || code === STATUS.CPUThreadFailed, deadline - performance.now());
     if (!started) throw new Error(`VM did not start within ${timeoutMs} ms (status ${statusName(status())})`);
@@ -549,6 +682,10 @@ async function boot(request) {
       if (performance.now() - lastProgress >= progressEvery) {
         lastProgress = performance.now();
         progress();
+      }
+      if (performance.now() - lastPersist >= PERSIST_INTERVAL_MS) {
+        lastPersist = performance.now();
+        await persistIfPossible(true);
       }
       const code = status();
       if ((frameLimitArmed || selfStopping) && (code === STATUS.Stopping || code === STATUS.Idle)) {
@@ -630,6 +767,9 @@ async function boot(request) {
     emu: {
       target: request.target,
       elf: elfPath,
+      disc: discPath,
+      opfsHandleMode: module && discPath ? opfsHandleMode() : undefined,
+      persistence,
       bios: request.bios ? `${biosDir}/${request.bios.name}` : undefined,
       isDump,
       initResult,

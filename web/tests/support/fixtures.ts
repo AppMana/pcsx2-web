@@ -18,13 +18,23 @@ export type Pcsx2TestConfig = {
   webgpuFrames: WebGpuFrameCompare | undefined;
 };
 
+/** A disc image next to a fixture's target that boots to the same oracle. */
+export type FixtureImage = {
+  name: string;
+  path: string;
+};
+
 export type Fixture = {
   name: string;
   dir: string;
   config: Pcsx2TestConfig;
+  /** "elf" boots the target as the ELF override; "disc" boots it through the BIOS from storage. */
+  kind: "elf" | "disc";
   elfPath: string;
   /** URL of the ELF relative to the served pages (the preview server maps /tests/fixtures/ to the repository tree). */
   targetUrl: string;
+  /** For disc fixtures: the target first, then every other ISO/BIN/CHD in the directory (recorded to the same expected/). */
+  images: FixtureImage[];
   expectedDir: string;
   expectedTtyPath: string | undefined;
   expectedCpuPath: string | undefined;
@@ -45,6 +55,8 @@ export function parseFixtureToml(text: string): Pcsx2TestConfig {
   };
 }
 
+const DISC_IMAGE = /\.(iso|bin|chd)$/i;
+
 export function loadFixture(dir: string, fixturesRoot = path.resolve("tests/fixtures")): Fixture {
   const config = parseFixtureToml(readFileSync(path.join(dir, "test.toml"), "utf8"));
   const name = path.basename(dir);
@@ -54,12 +66,19 @@ export function loadFixture(dir: string, fixturesRoot = path.resolve("tests/fixt
   const expectedAudioPath = path.join(expectedDir, "audio.jsonl");
   const inputPath = config.kit.input ? path.join(dir, config.kit.input) : undefined;
   const manifestPath = path.join(expectedDir, "manifest.json");
+  const kind = /\.elf$/i.test(config.kit.target) ? "elf" : "disc";
+  const images: FixtureImage[] = kind === "disc"
+    ? [config.kit.target, ...readdirSync(dir).filter((entry) => entry !== config.kit.target && DISC_IMAGE.test(entry)).sort()]
+      .map((entry) => ({ name: entry, path: path.join(dir, entry) }))
+    : [];
   return {
     name,
     dir,
     config,
+    kind,
     elfPath: path.join(dir, config.kit.target),
     targetUrl: path.posix.join("tests/fixtures", path.relative(fixturesRoot, dir).split(path.sep).join("/"), config.kit.target),
+    images,
     expectedDir,
     expectedTtyPath: existsSync(expectedTtyPath) ? expectedTtyPath : undefined,
     expectedCpuPath: existsSync(expectedCpuPath) ? expectedCpuPath : undefined,

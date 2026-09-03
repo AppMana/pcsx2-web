@@ -31,19 +31,21 @@ target_link_options(pcsx2_web_runtime PRIVATE
 	"-sNO_EXIT_RUNTIME=1"
 	"-sFORCE_FILESYSTEM=1"
 	"-sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap','HEAPU8','HEAP32','HEAPU32','PThread','GL','UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-	"-sEXPORTED_FUNCTIONS=['_malloc','_free']"
+	"-sEXPORTED_FUNCTIONS=['_malloc','_free','_emscripten_proxy_finish','_emscripten_proxy_execute_queue']"
 	"-sWASM_BIGINT=1"
 	"-sASSERTIONS=1"
 	"-sAUDIO_WORKLET=1"
 	"-sWASM_WORKERS=1"
 	"-sAUDIO_WORKLET_SUPPORT_AUDIO_PARAMS=0"
 	"--js-library=${PCSX2_WEB_AUDIO_LIBRARY}"
+	"--js-library=${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_opfs.js"
 	# The GS pthread owns the page's OffscreenCanvas (transferred at pthread_create through
 	# GL.offscreenCanvases); emdawnwebgpu creates the WebGPU surface from it by selector.
 	"-sOFFSCREENCANVAS_SUPPORT=1"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/fonts@/pcsx2/resources/fonts"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/shaders/webgpu@/pcsx2/resources/shaders/webgpu"
 	"--embed-file=${CMAKE_SOURCE_DIR}/bin/resources/GameIndex.yaml@/pcsx2/resources/GameIndex.yaml")
+set_property(TARGET pcsx2_web_runtime APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/host/pcsx2_web_opfs.js")
 if(PCSX2_WEB_PROFILE)
 	target_link_options(pcsx2_web_runtime PRIVATE --profiling-funcs)
 endif()

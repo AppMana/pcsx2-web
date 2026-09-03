@@ -16,6 +16,10 @@
 #include "fmt/format.h"
 #include "xxhash.h"
 
+#ifdef __EMSCRIPTEN__
+#include "CDVD/OpfsFileReader.h"
+#endif
+
 static constexpr u32 MAX_PARENTS = 32; // Surely someone wouldn't be insane enough to go beyond this...
 static std::vector<std::pair<std::string, chd_header>> s_chd_hash_cache; // <filename, header>
 static std::recursive_mutex s_chd_hash_cache_mutex;
@@ -36,6 +40,12 @@ private:
 	std::unique_ptr<u8[]> m_file_cache;
 	s64 m_file_cache_size;
 	s64 m_file_cache_pos;
+#ifdef __EMSCRIPTEN__
+	// The image lives in origin-private storage: reads go through the OPFS thread and the file
+	// position is kept here, since the access handle is positionless.
+	std::unique_ptr<Opfs::File> m_opfs;
+	s64 m_opfs_pos = 0;
+#endif
 
 public:
 	ChdCoreFileWrapper(std::FILE* file, ChdCoreFileWrapper* parent)
@@ -48,6 +58,14 @@ public:
 		m_core.fclose = FClose;
 		m_core.fseek = FSeek;
 	}
+
+#ifdef __EMSCRIPTEN__
+	explicit ChdCoreFileWrapper(std::unique_ptr<Opfs::File> file)
+		: ChdCoreFileWrapper(nullptr, nullptr)
+	{
+		m_opfs = std::move(file);
+	}
+#endif
 
 	~ChdCoreFileWrapper()
 	{
@@ -72,6 +90,10 @@ public:
 
 	s64 GetPrecacheSize()
 	{
+#ifdef __EMSCRIPTEN__
+		if (m_opfs)
+			return static_cast<s64>(m_opfs->GetSize());
+#endif
 		const s64 size = static_cast<size_t>(FileSystem::FSize64(m_file));
 		if (m_parent != nullptr)
 			return m_parent->GetPrecacheSize() + size;
@@ -81,6 +103,13 @@ public:
 
 	bool Precache(ProgressCallback* progress, Error* error)
 	{
+#ifdef __EMSCRIPTEN__
+		if (m_opfs)
+		{
+			Error::SetStringView(error, "Precaching is not supported for images in origin-private storage.");
+			return false;
+		}
+#endif
 		progress->SetProgressRange(100);
 
 		const s64 size = GetPrecacheSize();
@@ -145,6 +174,10 @@ private:
 	static u64 FSize(core_file* file)
 	{
 		ChdCoreFileWrapper* fileWrapper = FromCoreFile(file);
+#ifdef __EMSCRIPTEN__
+		if (fileWrapper->m_opfs)
+			return fileWrapper->m_opfs->GetSize();
+#endif
 		if (fileWrapper->m_file_cache)
 			return fileWrapper->m_file_cache_size;
 		else
@@ -154,6 +187,26 @@ private:
 	static size_t FRead(void* buffer, size_t elmSize, size_t elmCount, core_file* file)
 	{
 		ChdCoreFileWrapper* fileWrapper = FromCoreFile(file);
+#ifdef __EMSCRIPTEN__
+		if (fileWrapper->m_opfs)
+		{
+			if (elmSize == 0 || elmCount == 0 || fileWrapper->m_opfs_pos < 0)
+				return 0;
+
+			const u64 remaining = fileWrapper->m_opfs->GetSize() - std::min<u64>(fileWrapper->m_opfs->GetSize(), static_cast<u64>(fileWrapper->m_opfs_pos));
+			elmCount = std::min<size_t>(elmCount, static_cast<size_t>(remaining / elmSize));
+			const size_t size = elmSize * elmCount;
+			if (size == 0)
+				return 0;
+
+			const s64 got = fileWrapper->m_opfs->Read(buffer, static_cast<u64>(fileWrapper->m_opfs_pos), static_cast<u32>(size));
+			if (got <= 0)
+				return 0;
+
+			fileWrapper->m_opfs_pos += got;
+			return static_cast<size_t>(got) / elmSize;
+		}
+#endif
 		if (fileWrapper->m_file_cache)
 		{
 			// While currently libchdr only uses an elmCount of 1, we can't guarantee that will always be the case.
@@ -176,6 +229,27 @@ private:
 	static int FSeek(core_file* file, int64_t offset, int whence)
 	{
 		ChdCoreFileWrapper* fileWrapper = FromCoreFile(file);
+#ifdef __EMSCRIPTEN__
+		if (fileWrapper->m_opfs)
+		{
+			switch (whence)
+			{
+				case SEEK_SET:
+					fileWrapper->m_opfs_pos = offset;
+					break;
+				case SEEK_CUR:
+					fileWrapper->m_opfs_pos += offset;
+					break;
+				case SEEK_END:
+					fileWrapper->m_opfs_pos = static_cast<s64>(fileWrapper->m_opfs->GetSize()) + offset;
+					break;
+				default:
+					return -1;
+			}
+
+			return (fileWrapper->m_opfs_pos < 0) ? -1 : 0;
+		}
+#endif
 		if (fileWrapper->m_file_cache)
 		{
 			switch (whence)
@@ -364,17 +438,56 @@ static chd_file* OpenCHD(const std::string& filename, FileSystem::ManagedCFilePt
 	return chd;
 }
 
+#ifdef __EMSCRIPTEN__
+// Images in origin-private storage have no directory to search for parents, so only
+// self-contained CHDs open from there.
+static chd_file* OpenOpfsCHD(const std::string& filename, Error* error)
+{
+	std::unique_ptr<Opfs::File> file = std::make_unique<Opfs::File>();
+	if (!file->Open(Opfs::RelativePath(filename), error))
+		return nullptr;
+
+	chd_file* chd;
+	// libchdr takes ownership of the wrapper and frees it (through FClose) on failure.
+	ChdCoreFileWrapper* core_wrapper = new ChdCoreFileWrapper(std::move(file));
+	const chd_error err = chd_open_core_file(core_wrapper->GetCoreFile(), CHD_OPEN_READ, nullptr, &chd);
+	if (err == CHDERR_NONE)
+		return chd;
+
+	if (err == CHDERR_REQUIRES_PARENT)
+	{
+		Console.Error(fmt::format("Failed to open CHD '{}': parent CHDs are not supported in origin-private storage.", filename));
+		Error::SetStringView(error, "Parent CHDs are not supported for images in origin-private storage.");
+	}
+	else
+	{
+		Console.Error(fmt::format("Failed to open CHD '{}': {}", filename, chd_error_string(err)));
+		Error::SetString(error, chd_error_string(err));
+	}
+	return nullptr;
+}
+#endif
+
 bool ChdFileReader::Open2(std::string filename, Error* error)
 {
 	Close2();
 
 	m_filename = std::move(filename);
 
-	auto fp = FileSystem::OpenManagedSharedCFile(m_filename.c_str(), "rb", FileSystem::FileShareMode::DenyWrite, error);
-	if (!fp)
-		return false;
+#ifdef __EMSCRIPTEN__
+	if (Opfs::IsOpfsPath(m_filename))
+	{
+		ChdFile = OpenOpfsCHD(m_filename, error);
+	}
+	else
+#endif
+	{
+		auto fp = FileSystem::OpenManagedSharedCFile(m_filename.c_str(), "rb", FileSystem::FileShareMode::DenyWrite, error);
+		if (!fp)
+			return false;
 
-	ChdFile = OpenCHD(m_filename, std::move(fp), error, 0);
+		ChdFile = OpenCHD(m_filename, std::move(fp), error, 0);
+	}
 	if (!ChdFile)
 		return false;
 

@@ -37,6 +37,7 @@
 
 #include "pcsx2/Achievements.h"
 #include "pcsx2/CDVD/CDVD.h"
+#include "pcsx2/CDVD/OpfsFileReader.h"
 #include "pcsx2/Counters.h"
 #include "pcsx2/GS.h"
 #include "pcsx2/GS/GSXXH.h"
@@ -712,6 +713,20 @@ EMSCRIPTEN_KEEPALIVE int pcsx2_web_audio_status()
 EMSCRIPTEN_KEEPALIVE const void* pcsx2_web_audio_stats_address()
 {
 	return WebAudio::StatsAddress();
+}
+
+// The sync access handle mode the browser granted for the last disc image opened from
+// origin-private storage ("read-only" or "readwrite"); returns the length, 0 when none was opened.
+EMSCRIPTEN_KEEPALIVE int pcsx2_web_opfs_handle_mode(char* buffer, int buffer_size)
+{
+	if (!buffer || buffer_size <= 0)
+		return 0;
+
+	const std::string mode = Opfs::GetLastHandleMode();
+	const int count = static_cast<int>(std::min<size_t>(mode.size(), static_cast<size_t>(buffer_size - 1)));
+	std::memcpy(buffer, mode.data(), count);
+	buffer[count] = '\0';
+	return count;
 }
 
 // The canvas the GS presents to, as a CSS selector the page registered with the module's

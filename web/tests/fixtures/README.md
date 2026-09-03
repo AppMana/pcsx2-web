@@ -13,6 +13,11 @@ that the native oracle fills in with recorded outputs.
 | `gs_blend` | GS alpha blending equations, FIX values, a 64x64 RGBA texture upload, the Z test | 240 |
 | `vu1_cube` | VU1 microprogram upload, VIF unpack and MSCAL, XGKICK, a rotating gouraud cube | 240 |
 | `pad_echo` | DualShock 2 input through SIO2MAN/PADMAN replayed from `input.p2m2`, SPU2 output through audsrv | 400 |
+| `hello_tty_iso` | `hello_tty` booted from a disc image (ISO and CHD) through the BIOS and the CDVD reader | 120 |
+
+`hello_tty_iso` holds no sources of its own: `web/scripts/build-disc-fixtures.sh`
+wraps the committed `hello_tty.elf` in an ISO 9660 image with a `SYSTEM.CNF`
+and converts it to CHD with chdman; see its README for the exact commands.
 
 ## Building
 

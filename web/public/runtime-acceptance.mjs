@@ -1,13 +1,17 @@
 // The page side of the kit contract (@appmana-public/web-emulator-harness
 // src/contract.js): window.__pcsx2Runtime = { run, stop, setPad, snapshot,
 // exportInputTrace }. The module itself lives in runtime-worker.mjs; this
-// page fetches the BIOS from origin-private storage and the ELF from its
-// fixture URL, hands both to the worker, and relays the report.
+// page fetches the BIOS from origin-private storage and the target either
+// from its fixture URL (an ELF or a GS dump) or names it in storage (a
+// "/opfs/..." path: an ELF is read and handed over, a disc image stays in
+// storage and is opened by the core's OPFS reader), hands everything to the
+// worker, and relays the report.
 import { isGsDumpTarget } from "./pcsx2-report.mjs";
 import { createAudioHost } from "./pcsx2-web-audio.mjs";
 
 const BIOS_DIR = "pcsx2/bios";
 const MOUNT_ROOT = "/opfs";
+const DISC_EXTENSIONS = /\.(iso|bin|img|mdf|chd|cso|zso|gz|dump)$/i;
 // The canvas the GS presents to. transferControlToOffscreen() is permanent,
 // so every run gets a fresh element under the same id.
 const CANVAS_ID = "pcsx2-canvas";
@@ -83,6 +87,16 @@ async function fetchTarget(target) {
   return { name, bytes };
 }
 
+// Resolves a run target to what the worker boots: { elf } for an ELF or GS
+// dump (fetched from its URL or read from storage) or { disc } for a disc
+// image in storage, named by its mount path so the core opens it in place.
+async function resolveTarget(target) {
+  if (!String(target).startsWith(`${MOUNT_ROOT}/`)) return { elf: await fetchTarget(target) };
+  const relative = storageRelative(target);
+  if (DISC_EXTENSIONS.test(relative)) return { disc: { path: `${MOUNT_ROOT}/${relative}` } };
+  return { elf: await readStoredFile(relative) };
+}
+
 // Replaces the presentation canvas with a fresh element of the requested
 // size and hands its OffscreenCanvas to the caller.
 function takeCanvas(width, height) {
@@ -109,8 +123,10 @@ export async function ensureAudioContext() {
 
 // target: the URL of an ELF or a GS dump (.gs, .gs.xz, .gs.zst) relative to
 // this page, for example "tests/fixtures/hello_tty/hello_tty.elf" (served
-// from the repository's fixture tree). Dumps replay through GSDumpReplayer
-// and need no BIOS. options: frames, render (true: WebGPU hardware renderer,
+// from the repository's fixture tree), or the mount path of a stored file
+// such as "/opfs/games/game.iso" (ISO/BIN or CHD, opened in place by the
+// core; an ELF there is staged like a fetched one). Dumps replay through
+// GSDumpReplayer and need no BIOS. options: frames, render (true: WebGPU hardware renderer,
 // false: null renderer), renderer ("webgpu" | "sw" | "null"), gsHost
 // ("worker" | "main": where the GS pump runs), readback ("none" | "async"),
 // captureRgba, captureEvery, captureFrames (oracle frame numbers to read
@@ -132,8 +148,9 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
     const isDump = isGsDumpTarget(target);
     showStatus(`loading ${target}`);
     const biosPath = options.bios ? storageRelative(options.bios) : isDump ? undefined : await defaultBiosPath();
-    const [bios, elf] = await Promise.all([biosPath ? readStoredFile(biosPath) : undefined, fetchTarget(target)]);
-    showStatus(`booting ${elf.name}${bios ? ` with ${bios.name}` : ""}`);
+    const [bios, resolved] = await Promise.all([biosPath ? readStoredFile(biosPath) : undefined, resolveTarget(target)]);
+    const { elf, disc } = resolved;
+    showStatus(`booting ${elf ? elf.name : disc.path}${bios ? ` with ${bios.name}` : ""}`);
     const wantsCanvas = options.render === true || options.renderer === "webgpu";
     const canvasWidth = Number.isInteger(options.canvasWidth) ? options.canvasWidth : 640;
     const canvasHeight = Number.isInteger(options.canvasHeight) ? options.canvasHeight : 480;
@@ -169,7 +186,8 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         clearTimeout(timeout);
         reject(new Error(`PCSX2 runtime worker error: ${event.message || ""} ${event.filename || ""}:${event.lineno || 0}`.trim()));
       }, { once: true });
-      const transfer = [elf.bytes];
+      const transfer = [];
+      if (elf) transfer.push(elf.bytes);
       if (bios) transfer.push(bios.bytes);
       if (canvas) transfer.push(canvas);
       worker.postMessage({
@@ -180,6 +198,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         pthreadPoolSize: options.pthreadPoolSize,
         bios,
         elf,
+        disc,
         render: options.render,
         renderer: options.renderer,
         gsHost: options.gsHost,
