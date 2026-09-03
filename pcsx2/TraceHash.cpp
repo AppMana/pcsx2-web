@@ -3,6 +3,7 @@
 
 #include "TraceHash.h"
 
+#include "GS/GSXXH.h"
 #include "Host/AudioStream.h"
 #include "Memory.h"
 #include "R3000A.h"
@@ -12,10 +13,6 @@
 #include "VUmicro.h"
 
 #include "fmt/format.h"
-
-#define XXH_STATIC_LINKING_ONLY 1
-#define XXH_INLINE_ALL 1
-#include <xxhash.h>
 
 #include <vector>
 
