@@ -84,7 +84,21 @@ if(PCSX2_WEB)
 	set(USE_VTUNE OFF CACHE BOOL "" FORCE)
 	set(USE_LINKED_FFMPEG OFF CACHE BOOL "" FORCE)
 	set(POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
+	set(USE_WEBGPU ON CACHE BOOL "" FORCE)
+	set(USE_WEBGPU_NATIVE OFF CACHE BOOL "" FORCE)
 	list(APPEND PCSX2_DEFS PCSX2_WEB=1)
+
+	# Synchronous GPU readbacks (GSDownloadTexture::Map) block in wgpuInstanceWaitAny, which
+	# emdawnwebgpu only implements under Asyncify. "none" keeps the event-loop driven paths
+	# (readback modes none/async); "asyncify" links -sASYNCIFY so the native blocking paths work.
+	set(PCSX2_WEB_SYNC_READBACK "none" CACHE STRING "Synchronous GPU readback support in the browser build: none or asyncify")
+	set_property(CACHE PCSX2_WEB_SYNC_READBACK PROPERTY STRINGS "none" "asyncify")
+	if(PCSX2_WEB_SYNC_READBACK STREQUAL "asyncify")
+		list(APPEND PCSX2_DEFS PCSX2_WEB_SYNC_READBACK=1)
+		add_link_options("-sASYNCIFY=1")
+	elseif(NOT PCSX2_WEB_SYNC_READBACK STREQUAL "none")
+		message(FATAL_ERROR "PCSX2_WEB_SYNC_READBACK must be none or asyncify")
+	endif()
 endif()
 
 #-------------------------------------------------------------------------------
@@ -124,6 +138,12 @@ if(EMSCRIPTEN)
 	set(ARCH_WASM32 TRUE)
 	add_compile_options("-msimd128" "-msse4.1" "-pthread")
 	add_link_options("-pthread")
+	if(USE_WEBGPU)
+		# Dawn's webgpu.h implementation for Emscripten; the remote port pins the same Dawn tag the
+		# native build links (~/deps/dawn) and adds webgpu/webgpu.h to the include path.
+		add_compile_options("--use-port=emdawnwebgpu")
+		add_link_options("--use-port=emdawnwebgpu")
+	endif()
 elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
    "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
 	# Multi-ISA only exists on x86.
