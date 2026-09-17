@@ -5,5 +5,6 @@ public/core/
 public/coi-serviceworker.js
 public/kit/
 test-results/
+device-evidence/
 playwright-report/
 tests/fixtures/*/expected/*.self.*

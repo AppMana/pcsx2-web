@@ -9,7 +9,7 @@
 // through its own OPFS thread (pcsx2/CDVD/OpfsFileReader.cpp), so nothing is
 // copied into MEMFS for them.
 //
-// Messages in:  boot { coreUrl, pthreadPoolSize, bios?: { name, bytes }, elf?: { name, bytes },
+// Messages in:  boot { coreUrl, wasmUrl, pthreadPoolSize, bios?: { name, bytes }, elf?: { name, bytes },
 //                     disc?: { path }, isDump,
 //                     render, renderer, gsHost, readback, captureRgba, captureEvery, captureFrames, loops,
 //                     canvas?: OffscreenCanvas, canvasSelector, canvasWidth, canvasHeight,
@@ -470,10 +470,13 @@ async function boot(request) {
 
   try {
     const coreUrl = request.coreUrl ? new URL(request.coreUrl, scope.location.href).href : new URL("./core/pcsx2-web.mjs", scope.location.href).href;
+    // wasmUrl names the binary when it does not sit next to the glue (a Blob
+    // URL module cannot resolve a sibling).
+    const wasmUrl = request.wasmUrl ? new URL(request.wasmUrl, scope.location.href).href : undefined;
     const { default: createPCSX2 } = await import(coreUrl);
     module = await createPCSX2({
       pthreadPoolSize: Number.isInteger(request.pthreadPoolSize) ? request.pthreadPoolSize : 8,
-      locateFile: (name) => new URL(name, coreUrl).href,
+      locateFile: (name) => (wasmUrl && name.endsWith(".wasm") ? wasmUrl : new URL(name, coreUrl).href),
       print: recordLog,
       printErr: recordLog,
       onAbort: (reason) => { failure ??= `module aborted: ${reason}`; },

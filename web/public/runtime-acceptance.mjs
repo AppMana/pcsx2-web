@@ -73,20 +73,25 @@ async function defaultBiosPath() {
   return `${BIOS_DIR}/${names[0]}`;
 }
 
-async function fetchTarget(target) {
+async function fetchTarget(target, name) {
   const url = new URL(target, location.href);
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`fetch ${url.pathname} failed with HTTP ${response.status}`);
   const bytes = await response.arrayBuffer();
-  const name = decodeURIComponent(url.pathname.split("/").pop() || "target.elf");
-  return { name, bytes };
+  return { name: name || decodeURIComponent(url.pathname.split("/").pop() || "target.elf"), bytes };
+}
+
+// A BIOS named by URL (blob:, http:, https:) is fetched; anything else is a
+// storage path.
+function isUrl(value) {
+  return /^(blob|https?):/i.test(String(value));
 }
 
 // Resolves a run target to what the worker boots: { elf } for an ELF or GS
 // dump (fetched from its URL or read from storage) or { disc } for a disc
 // image in storage, named by its mount path so the core opens it in place.
-async function resolveTarget(target) {
-  if (!String(target).startsWith(`${MOUNT_ROOT}/`)) return { elf: await fetchTarget(target) };
+async function resolveTarget(target, name) {
+  if (!String(target).startsWith(`${MOUNT_ROOT}/`)) return { elf: await fetchTarget(target, name) };
   const relative = storageRelative(target);
   if (DISC_EXTENSIONS.test(relative)) return { disc: { path: `${MOUNT_ROOT}/${relative}` } };
   return { elf: await readStoredFile(relative) };
@@ -116,8 +121,11 @@ function takeCanvas(width, height) {
 // ("worker" | "main": where the GS pump runs), readback ("none" | "async"),
 // captureRgba, captureEvery, captureFrames (oracle frame numbers to read
 // back), loops (dump replays), bios (storage path of the
-// BIOS file), settings (Section/Key -> value), cpu, trace { cpu, ramEvery,
-// tty }, timeoutMs, pthreadPoolSize, coreUrl, pad, canvasWidth, canvasHeight.
+// BIOS file, or its URL), settings (Section/Key -> value), cpu, trace { cpu,
+// ramEvery, tty }, timeoutMs, pthreadPoolSize, coreUrl, wasmUrl, pad,
+// canvasWidth, canvasHeight. targetName and biosName name the staged files
+// when their URLs do not (Blob URLs). The last completed run's report stays
+// at window.__pcsx2Runtime.lastReport.
 function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
   if (active) return active;
   activeWorker?.terminate();
@@ -125,10 +133,15 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
   recordedInputs = [];
   active = (async () => {
     const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1_000, options.timeoutMs) : 120_000;
-    const isDump = isGsDumpTarget(target);
-    showStatus(`loading ${target}`);
-    const biosPath = options.bios ? storageRelative(options.bios) : isDump ? undefined : await defaultBiosPath();
-    const [bios, resolved] = await Promise.all([biosPath ? readStoredFile(biosPath) : undefined, resolveTarget(target)]);
+    const targetName = options.targetName || undefined;
+    const isDump = isGsDumpTarget(targetName ?? target);
+    showStatus(`loading ${targetName ?? target}`);
+    const biosUrl = options.bios && isUrl(options.bios) ? options.bios : undefined;
+    const biosPath = biosUrl ? undefined : options.bios ? storageRelative(options.bios) : isDump ? undefined : await defaultBiosPath();
+    const [bios, resolved] = await Promise.all([
+      biosUrl ? fetchTarget(biosUrl, options.biosName) : biosPath ? readStoredFile(biosPath) : undefined,
+      resolveTarget(target, targetName),
+    ]);
     const { elf, disc } = resolved;
     showStatus(`booting ${elf ? elf.name : disc.path}${bios ? ` with ${bios.name}` : ""}`);
     const wantsCanvas = options.render === true || options.renderer === "webgpu";
@@ -174,6 +187,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
         target,
         isDump,
         coreUrl: options.coreUrl,
+        wasmUrl: options.wasmUrl,
         pthreadPoolSize: options.pthreadPoolSize,
         bios,
         elf,
@@ -203,6 +217,7 @@ function run(target = "tests/fixtures/hello_tty/hello_tty.elf", options = {}) {
       worker.terminate();
     });
     report.emu.recordedInputs = recordedInputs;
+    api.lastReport = report;
     if (resultElement) resultElement.textContent = JSON.stringify(report, null, 2);
     showStatus(`${report.ok ? "ok" : "failed"} · ${report.detail}`);
     return report;
@@ -260,5 +275,6 @@ function exportInputTrace() {
   });
 }
 
-window.__pcsx2Runtime = { run, stop, setPad, snapshot, exportInputTrace };
+const api = { run, stop, setPad, snapshot, exportInputTrace, lastReport: undefined };
+window.__pcsx2Runtime = api;
 showStatus("idle");

@@ -1,0 +1,435 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-03T05:47:07.282Z",
+  "lane": "injected",
+  "emulator": "pcsx2",
+  "target": {
+    "kind": "dump",
+    "name": "gs_blend-frame00700",
+    "targetUrl": "tests/fixtures/gs_blend/expected/dumps/frame00700.gs.zst"
+  },
+  "device": {
+    "name": "local Chrome",
+    "osVersion": "152.0.7977.64"
+  },
+  "page": {
+    "url": "http://127.0.0.1:4196/units.html",
+    "title": "PCSX2 wasm unit tests",
+    "hardwareConcurrency": 32,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36"
+  },
+  "prerequisites": {
+    "secureContext": true,
+    "crossOriginIsolated": true,
+    "sharedArrayBuffer": true,
+    "webGpu": true,
+    "wasm": true,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "hardwareConcurrency": 32,
+    "url": "http://127.0.0.1:4196/units.html"
+  },
+  "capabilities": {
+    "gpuInWorker": true,
+    "offscreenCanvas": true,
+    "sharedArrayBuffer": true,
+    "crossOriginIsolated": true,
+    "hardwareConcurrency": 32,
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "ampere",
+      "device": "0x2231",
+      "description": "NVIDIA RTX A5000",
+      "isFallbackAdapter": false
+    },
+    "features": [
+      "bgra8unorm-storage",
+      "chromium-experimental-multi-draw-indirect",
+      "chromium-experimental-sampling-resource-table",
+      "chromium-experimental-subgroup-matrix",
+      "chromium-experimental-timestamp-query-inside-passes",
+      "clip-distances",
+      "core-features-and-limits",
+      "depth-clip-control",
+      "depth32float-stencil8",
+      "dual-source-blending",
+      "float32-blendable",
+      "float32-filterable",
+      "indirect-first-instance",
+      "primitive-index",
+      "rg11b10ufloat-renderable",
+      "subgroup-size-control",
+      "subgroups",
+      "texture-component-swizzle",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "texture-compression-unaligned",
+      "texture-formats-tier1",
+      "texture-formats-tier2",
+      "timestamp-query"
+    ],
+    "limits": {
+      "maxBufferSize": 4294967292,
+      "maxStorageBufferBindingSize": 2147483644,
+      "maxUniformBufferBindingSize": 65536,
+      "maxTextureDimension2D": 16384,
+      "maxTextureArrayLayers": 2048,
+      "maxBindGroups": 4,
+      "maxColorAttachments": 8,
+      "maxComputeWorkgroupStorageSize": 49152
+    },
+    "gpuOnMain": true,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36"
+  },
+  "runOptions": {
+    "frames": 100000,
+    "render": true,
+    "renderer": "webgpu",
+    "readback": "async",
+    "captureRgba": true,
+    "captureEvery": 1,
+    "loops": 2,
+    "timeoutMs": 600000,
+    "pthreadPoolSize": 6
+  },
+  "measurements": {
+    "wallMs": 1157.425000011921,
+    "moduleCreateMs": 252.36500000953674,
+    "bootMs": 789.7849999964237,
+    "firstFrameMs": 810.080000013113,
+    "lastFrameMs": 910.9250000119209,
+    "observedFrames": 8,
+    "requestedFrames": 100000,
+    "vsyncsPerSecond": 69.4134562951336,
+    "vsyncsPerSecondFromBoot": 66.03929337111255,
+    "heapBytes": 805306368,
+    "workingSet": {
+      "heapBytes": 805306368,
+      "poolBusy": 3,
+      "poolIdle": 3,
+      "poolTotal": 6,
+      "frameCount": 8,
+      "ttyBytes": 0,
+      "traceBytes": 0
+    },
+    "shutdownWorkingSet": {
+      "heapBytes": 805306368,
+      "poolBusy": 3,
+      "poolIdle": 3,
+      "poolTotal": 6,
+      "frameCount": 8,
+      "ttyBytes": 0,
+      "traceBytes": 0
+    },
+    "threads": {
+      "busy": 3,
+      "idle": 3,
+      "total": 6,
+      "busyAfterStop": 3
+    },
+    "adapter": "WebGPU (WebGPU)\n0x2231\nNVIDIA RTX A5000",
+    "gsHost": "worker",
+    "captured": 8
+  },
+  "passed": true,
+  "checks": [
+    {
+      "name": "page list unchanged during the run",
+      "ok": true
+    },
+    {
+      "name": "secureContext",
+      "ok": true
+    },
+    {
+      "name": "crossOriginIsolated",
+      "ok": true
+    },
+    {
+      "name": "sharedArrayBuffer",
+      "ok": true
+    },
+    {
+      "name": "report schema",
+      "ok": true
+    },
+    {
+      "name": "run ok",
+      "ok": true,
+      "detail": "ran 8 frames"
+    },
+    {
+      "name": "bootResult 0",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "stoppedCleanly",
+      "ok": true,
+      "detail": "Idle -> Idle"
+    },
+    {
+      "name": "navigator.gpu where the GS runs (worker)",
+      "ok": true
+    },
+    {
+      "name": "adapter matches /./",
+      "ok": true,
+      "detail": "WebGPU (WebGPU)\n0x2231\nNVIDIA RTX A5000\nnvidia ampere 0x2231 NVIDIA RTX A5000"
+    },
+    {
+      "name": "dump frame 1 matches expected/webgpu-native",
+      "ok": true
+    },
+    {
+      "name": "dump frame 2 matches expected/webgpu-native",
+      "ok": true
+    },
+    {
+      "name": "dump frame 3 matches expected/webgpu-native",
+      "ok": true
+    },
+    {
+      "name": "dump frame 4 matches expected/webgpu-native",
+      "ok": true
+    }
+  ],
+  "frames": [
+    {
+      "dumpFrame": 1,
+      "ok": true,
+      "md5Match": true,
+      "md5": {
+        "expected": "b8651f87c7e11503c51d97d1b1802e57",
+        "actual": "b8651f87c7e11503c51d97d1b1802e57"
+      },
+      "width": 640,
+      "height": 480,
+      "nativeWidth": 640,
+      "nativeHeight": 480,
+      "renderMs": 15.319,
+      "changedPixels": 0,
+      "png": "gs_blend-frame00700-loop0-frame00001.png",
+      "rmse": {
+        "ok": true,
+        "rmse": 0,
+        "mae": 0,
+        "psnr": null,
+        "maxChannelError": 0,
+        "exactPixelFraction": 1,
+        "closePixelFraction": 1,
+        "pixelMaxErrorPercentiles": {
+          "p50": 0,
+          "p90": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "thresholds": {
+          "maxRmse": 1,
+          "minClosePixels": 0.99
+        }
+      }
+    },
+    {
+      "dumpFrame": 2,
+      "ok": true,
+      "md5Match": true,
+      "md5": {
+        "expected": "b8651f87c7e11503c51d97d1b1802e57",
+        "actual": "b8651f87c7e11503c51d97d1b1802e57"
+      },
+      "width": 640,
+      "height": 480,
+      "nativeWidth": 640,
+      "nativeHeight": 480,
+      "renderMs": 16.65,
+      "changedPixels": 0,
+      "png": "gs_blend-frame00700-loop0-frame00002.png",
+      "rmse": {
+        "ok": true,
+        "rmse": 0,
+        "mae": 0,
+        "psnr": null,
+        "maxChannelError": 0,
+        "exactPixelFraction": 1,
+        "closePixelFraction": 1,
+        "pixelMaxErrorPercentiles": {
+          "p50": 0,
+          "p90": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "thresholds": {
+          "maxRmse": 1,
+          "minClosePixels": 0.99
+        }
+      }
+    },
+    {
+      "dumpFrame": 3,
+      "ok": true,
+      "md5Match": true,
+      "md5": {
+        "expected": "b8651f87c7e11503c51d97d1b1802e57",
+        "actual": "b8651f87c7e11503c51d97d1b1802e57"
+      },
+      "width": 640,
+      "height": 480,
+      "nativeWidth": 640,
+      "nativeHeight": 480,
+      "renderMs": 16.67,
+      "changedPixels": 0,
+      "png": "gs_blend-frame00700-loop0-frame00003.png",
+      "rmse": {
+        "ok": true,
+        "rmse": 0,
+        "mae": 0,
+        "psnr": null,
+        "maxChannelError": 0,
+        "exactPixelFraction": 1,
+        "closePixelFraction": 1,
+        "pixelMaxErrorPercentiles": {
+          "p50": 0,
+          "p90": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "thresholds": {
+          "maxRmse": 1,
+          "minClosePixels": 0.99
+        }
+      }
+    },
+    {
+      "dumpFrame": 4,
+      "ok": true,
+      "md5Match": true,
+      "md5": {
+        "expected": "b8651f87c7e11503c51d97d1b1802e57",
+        "actual": "b8651f87c7e11503c51d97d1b1802e57"
+      },
+      "width": 640,
+      "height": 480,
+      "nativeWidth": 640,
+      "nativeHeight": 480,
+      "renderMs": 16.624,
+      "changedPixels": 0,
+      "png": "gs_blend-frame00700-loop0-frame00004.png",
+      "rmse": {
+        "ok": true,
+        "rmse": 0,
+        "mae": 0,
+        "psnr": null,
+        "maxChannelError": 0,
+        "exactPixelFraction": 1,
+        "closePixelFraction": 1,
+        "pixelMaxErrorPercentiles": {
+          "p50": 0,
+          "p90": 0,
+          "p95": 0,
+          "p99": 0
+        },
+        "thresholds": {
+          "maxRmse": 1,
+          "minClosePixels": 0.99
+        }
+      }
+    }
+  ],
+  "report": {
+    "schema": 1,
+    "emulator": "pcsx2",
+    "ok": true,
+    "detail": "ran 8 frames",
+    "bootResult": 0,
+    "moduleCreateMs": 252.36500000953674,
+    "gpu": {
+      "adapter": "WebGPU (WebGPU)\n0x2231\nNVIDIA RTX A5000",
+      "captured": 8,
+      "readback": "async",
+      "gsHost": "worker"
+    },
+    "workingSet": {
+      "heapBytes": 805306368,
+      "poolBusy": 3,
+      "poolIdle": 3,
+      "poolTotal": 6,
+      "frameCount": 8,
+      "ttyBytes": 0,
+      "traceBytes": 0
+    },
+    "shutdown": {
+      "stoppedCleanly": true,
+      "stopMs": 0.8350000083446503,
+      "detail": "Idle -> Idle",
+      "workingSet": {
+        "heapBytes": 805306368,
+        "poolBusy": 3,
+        "poolIdle": 3,
+        "poolTotal": 6,
+        "frameCount": 8,
+        "ttyBytes": 0,
+        "traceBytes": 0
+      },
+      "persisted": []
+    },
+    "tty": [],
+    "frames": 8,
+    "events": 6,
+    "emu": {
+      "target": "blob:http://127.0.0.1:4196/eb26cd2c-d398-4ff7-96fc-68d09dd63559",
+      "elf": "/fixtures/frame00700.gs.zst",
+      "persistence": {
+        "restored": [],
+        "saved": [],
+        "passes": 1
+      },
+      "isDump": true,
+      "initResult": 0,
+      "status": 0,
+      "statusName": "Idle",
+      "renderer": 18,
+      "requestedFrames": 100000,
+      "observedFrames": 8,
+      "trace": {
+        "supported": true,
+        "cpu": false,
+        "ramEvery": 0,
+        "tty": true
+      },
+      "cpuJsonl": "0 records"
+    }
+  },
+  "quiet": [
+    {
+      "at": "2026-09-03T05:47:03.389Z",
+      "device": {
+        "name": "local Chrome",
+        "osVersion": "152.0.7977.64"
+      },
+      "pages": [
+        "http://127.0.0.1:4196/units.html"
+      ],
+      "processes": []
+    },
+    {
+      "at": "2026-09-03T05:47:03.390Z",
+      "device": {
+        "name": "local Chrome",
+        "osVersion": "152.0.7977.64"
+      },
+      "pages": [
+        "http://127.0.0.1:4196/units.html"
+      ],
+      "processes": []
+    }
+  ],
+  "cleanup": {
+    "stopped": true,
+    "elements": [
+      "pcsx2-device-lane"
+    ],
+    "urls": 14,
+    "opfs": "never created"
+  },
+  "evidenceDir": "device-evidence/injected-gs_blend-frame00700-20260903T054703Z"
+}

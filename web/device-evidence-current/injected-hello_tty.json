@@ -1,0 +1,230 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-03T05:54:05.396Z",
+  "lane": "injected",
+  "emulator": "pcsx2",
+  "target": {
+    "kind": "elf",
+    "name": "hello_tty",
+    "targetUrl": "tests/fixtures/hello_tty/hello_tty.elf"
+  },
+  "device": {
+    "name": "Benjamin’s iPad",
+    "osVersion": "26.6.1"
+  },
+  "page": {
+    "url": "https://rpcs3.appmana.com/runtime.html?device=1788413941031",
+    "title": "RPCS3 Wasm runtime acceptance",
+    "hardwareConcurrency": 8,
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Safari/605.1.15"
+  },
+  "prerequisites": {
+    "secureContext": true,
+    "crossOriginIsolated": true,
+    "sharedArrayBuffer": true,
+    "webGpu": true,
+    "wasm": true,
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Safari/605.1.15",
+    "hardwareConcurrency": 8,
+    "url": "https://rpcs3.appmana.com/runtime.html?device=1788413941031"
+  },
+  "capabilities": {
+    "gpuInWorker": true,
+    "offscreenCanvas": true,
+    "sharedArrayBuffer": true,
+    "crossOriginIsolated": true,
+    "hardwareConcurrency": 8,
+    "adapter": {
+      "vendor": "apple",
+      "architecture": "apple",
+      "device": "apple",
+      "description": "apple",
+      "isFallbackAdapter": false
+    },
+    "features": [
+      "bgra8unorm-storage",
+      "core-features-and-limits",
+      "depth-clip-control",
+      "depth32float-stencil8",
+      "float16-renderable",
+      "float32-blendable",
+      "float32-filterable",
+      "float32-renderable",
+      "indirect-first-instance",
+      "rg11b10ufloat-renderable",
+      "shader-f16",
+      "texture-compression-astc",
+      "texture-compression-astc-sliced-3d",
+      "texture-compression-bc",
+      "texture-compression-bc-sliced-3d",
+      "texture-compression-etc2",
+      "texture-formats-tier1",
+      "timestamp-query"
+    ],
+    "limits": {
+      "maxBufferSize": 1073741824,
+      "maxStorageBufferBindingSize": 1073741824,
+      "maxUniformBufferBindingSize": 1073741824,
+      "maxTextureDimension2D": 16384,
+      "maxTextureArrayLayers": 2048,
+      "maxBindGroups": 11,
+      "maxColorAttachments": 8,
+      "maxComputeWorkgroupStorageSize": 32768
+    },
+    "gpuOnMain": true,
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Safari/605.1.15"
+  },
+  "runOptions": {
+    "frames": 600,
+    "render": false,
+    "cpu": "interpreter",
+    "trace": {
+      "cpu": true,
+      "ramEvery": 100,
+      "tty": true
+    },
+    "timeoutMs": 600000,
+    "pthreadPoolSize": 6
+  },
+  "measurements": {
+    "wallMs": 27.15999999991618,
+    "moduleCreateMs": 0,
+    "observedFrames": 0,
+    "requestedFrames": 600
+  },
+  "passed": false,
+  "checks": [
+    {
+      "name": "page list unchanged during the run",
+      "ok": true
+    },
+    {
+      "name": "secureContext",
+      "ok": true
+    },
+    {
+      "name": "crossOriginIsolated",
+      "ok": true
+    },
+    {
+      "name": "sharedArrayBuffer",
+      "ok": true
+    },
+    {
+      "name": "report schema",
+      "ok": true
+    },
+    {
+      "name": "run ok",
+      "ok": false,
+      "detail": "create: Out of memory"
+    },
+    {
+      "name": "bootResult 0",
+      "ok": false
+    },
+    {
+      "name": "stoppedCleanly",
+      "ok": false,
+      "detail": "module was never created"
+    },
+    {
+      "name": "observed frames",
+      "ok": false,
+      "detail": "0/600"
+    },
+    {
+      "name": "tty matches expected/tty.txt",
+      "ok": false,
+      "detail": "TTY diverges at filtered line 1: expected \"HELLO=hello_tty\", actual undefined (0/221 lines)"
+    },
+    {
+      "name": "cpu.jsonl matches expected/cpu.jsonl",
+      "ok": false,
+      "detail": "the run exported no cpu.jsonl"
+    }
+  ],
+  "tty": {
+    "ok": false,
+    "reason": "TTY diverges at filtered line 1: expected \"HELLO=hello_tty\", actual undefined (0/221 lines)",
+    "expectedLines": 221,
+    "actualLines": 0,
+    "firstDivergence": {
+      "line": 1,
+      "expected": "HELLO=hello_tty"
+    }
+  },
+  "report": {
+    "schema": 1,
+    "emulator": "pcsx2",
+    "ok": false,
+    "detail": "create: Out of memory",
+    "moduleCreateMs": 0,
+    "shutdown": {
+      "stoppedCleanly": false,
+      "detail": "module was never created"
+    },
+    "tty": [],
+    "frames": 0,
+    "events": 1,
+    "emu": {
+      "target": "blob:https://rpcs3.appmana.com/fd5a914d-4c5d-4501-9d83-dcc855585f2e",
+      "elf": "/fixtures/hello_tty.elf",
+      "disc": null,
+      "opfsHandleMode": null,
+      "persistence": {
+        "restored": [],
+        "saved": [],
+        "passes": 0
+      },
+      "bios": "/pcsx2/bios/ps2-0220a-20060905.bin",
+      "isDump": false,
+      "initResult": null,
+      "status": -1,
+      "statusName": "Uninitialized",
+      "fatal": null,
+      "renderer": 11,
+      "requestedFrames": 600,
+      "observedFrames": 0,
+      "trace": {
+        "supported": false,
+        "cpu": true,
+        "ramEvery": 100,
+        "tty": true
+      }
+    }
+  },
+  "quiet": [
+    {
+      "at": "2026-09-03T05:51:54.226Z",
+      "device": {
+        "name": "Benjamin’s iPad",
+        "osVersion": "26.6.1"
+      },
+      "pages": [
+        "https://rpcs3.appmana.com/runtime.html?device=1788413941031"
+      ],
+      "processes": []
+    },
+    {
+      "at": "2026-09-03T05:53:54.431Z",
+      "device": {
+        "name": "Benjamin’s iPad",
+        "osVersion": "26.6.1"
+      },
+      "pages": [
+        "https://rpcs3.appmana.com/runtime.html?device=1788413941031"
+      ],
+      "processes": []
+    }
+  ],
+  "cleanup": {
+    "stopped": true,
+    "elements": [
+      "pcsx2-device-lane"
+    ],
+    "urls": 15,
+    "opfs": "never created"
+  },
+  "evidenceDir": "device-evidence/injected-hello_tty-20260903T055154Z"
+}
