@@ -74,8 +74,18 @@ function listTargets() {
   if (boot && !targets.includes(boot)) targets.unshift(boot);
   targetSelect.replaceChildren(...targets.map((target) => Object.assign(document.createElement("option"), { value: target, textContent: target.split("/").pop() })));
   if (boot) targetSelect.value = boot;
-  webgpuCheckbox.checked = Boolean(navigator.gpu);
-  webgpuCheckbox.disabled = !navigator.gpu;
+}
+
+// WebGPU is offered only when an adapter actually answers (headless or
+// blocklisted browsers expose navigator.gpu without one).
+async function probeWebGpu() {
+  webgpuCheckbox.checked = false;
+  webgpuCheckbox.disabled = true;
+  try {
+    const adapter = await navigator.gpu?.requestAdapter();
+    webgpuCheckbox.disabled = !adapter;
+    webgpuCheckbox.checked = Boolean(adapter);
+  } catch {}
 }
 
 async function loadTrace() {
@@ -157,3 +167,4 @@ window.__pcsx2Playable = { start, stop, setPad: (state) => runtime()?.setPad(sta
 
 listTargets();
 void listBios();
+void probeWebGpu();
