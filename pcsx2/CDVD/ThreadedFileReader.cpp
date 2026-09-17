@@ -4,6 +4,7 @@
 #include "ThreadedFileReader.h"
 #include "Host.h"
 
+#include "common/Console.h"
 #include "common/Error.h"
 #include "common/HostSys.h"
 #include "common/Path.h"
@@ -24,10 +25,12 @@ ThreadedFileReader::ThreadedFileReader()
 
 ThreadedFileReader::~ThreadedFileReader()
 {
+	Console.WriteLn("TFR: dtor join");
 	m_quit = true;
 	(void)std::lock_guard<std::mutex>{m_mtx};
 	m_condition.notify_one();
 	m_readThread.join();
+	Console.WriteLn("TFR: dtor joined");
 	for (auto& buffer : m_buffer)
 		if (buffer.ptr)
 			free(buffer.ptr);
@@ -392,7 +395,9 @@ void ThreadedFileReader::CancelRead(void)
 
 void ThreadedFileReader::Close(void)
 {
+	Console.WriteLn("TFR: Close cancel+wait");
 	CancelAndWaitUntilStopped();
+	Console.WriteLn("TFR: Close stopped");
 	for (auto& buf : m_buffer)
 		buf.size.store(0, std::memory_order_relaxed);
 	Close2();

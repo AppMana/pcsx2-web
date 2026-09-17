@@ -164,7 +164,9 @@ void Opfs::File::Close()
 	m_handle = -1;
 	m_size = 0;
 	m_mode.clear();
-	OpfsThread::Get().Sync([handle]() { pcsx2_web_opfs_close(handle); });
+	Console.WriteLnFmt("OPFS: closing handle {}", handle);
+	const bool proxied = OpfsThread::Get().Sync([handle]() { pcsx2_web_opfs_close(handle); });
+	Console.WriteLnFmt("OPFS: closed handle {} (proxied={})", handle, proxied);
 }
 
 s64 Opfs::File::Read(void* dst, u64 offset, u32 length)
@@ -240,7 +242,9 @@ int OpfsFileReader::ReadChunk(void* dst, s64 blockID)
 
 void OpfsFileReader::Close2()
 {
+	Console.WriteLn("OPFS: OpfsFileReader::Close2");
 	m_file.Close();
+	Console.WriteLn("OPFS: OpfsFileReader::Close2 done");
 }
 
 u32 OpfsFileReader::GetBlockCount() const

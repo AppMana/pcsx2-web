@@ -141,10 +141,13 @@ addToLibrary({
     var file = PcsxOpfs.files.get(handle);
     if (!file) return;
     PcsxOpfs.files.delete(handle);
+    err("OPFS js: close " + file.path + " begin");
     try {
       file.access.close();
+      err("OPFS js: access.close() returned");
     } finally {
       file.release();
+      err("OPFS js: lock released");
     }
   },
 });
