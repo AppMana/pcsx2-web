@@ -138,6 +138,7 @@ namespace x86Emitter
 	}
 	void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const xRegisterBase& src2, const xRegisterBase& src3)
 	{
+		XTRACE(XOp::SIMD4, 0, SimdInfoBits(info), dst, src1, src2, src3);
 		pxAssert(!info.is_mov);
 		pxAssertMsg(!info.is_commutative, "I don't think any blend instructions are commutative...");
 		if (x86Emitter::use_avx)
@@ -156,6 +157,7 @@ namespace x86Emitter
 	}
 	void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const xIndirectVoid& src2, const xRegisterBase& src3)
 	{
+		XTRACE(XOp::SIMD4, 0, SimdInfoBits(info), dst, src1, src2, src3);
 		pxAssert(!info.is_mov);
 		pxAssertMsg(!info.is_commutative, "I don't think any blend instructions are commutative...");
 		if (x86Emitter::use_avx)
@@ -583,12 +585,14 @@ namespace x86Emitter
 	// Store Streaming SIMD Extension Control/Status to Mem32.
 	__emitinline void xSTMXCSR(const xIndirect32& dest)
 	{
+		XTRACE(XOp::STMXCSR, 0, dest);
 		xOpWrite0F(0, 0xae, 3, dest);
 	}
 
 	// Load Streaming SIMD Extension Control/Status from Mem32.
 	__emitinline void xLDMXCSR(const xIndirect32& src)
 	{
+		XTRACE(XOp::LDMXCSR, 0, src);
 		xOpWrite0F(0, 0xae, 2, src);
 	}
 
@@ -596,6 +600,7 @@ namespace x86Emitter
 	// Target buffer must be at least 512 bytes in length to hold the result.
 	__emitinline void xFXSAVE(const xIndirectVoid& dest)
 	{
+		XTRACE(XOp::FXSAVE, 0, dest);
 		xOpWrite0F(0, 0xae, 0, dest);
 	}
 
@@ -603,11 +608,13 @@ namespace x86Emitter
 	// Source buffer should be 512 bytes in length.
 	__emitinline void xFXRSTOR(const xIndirectVoid& src)
 	{
+		XTRACE(XOp::FXRSTOR, 0, src);
 		xOpWrite0F(0, 0xae, 1, src);
 	}
 
 	void xVZEROUPPER()
 	{
+		XTRACE(XOp::VZEROUPPER);
 		// rather than dealing with nonexistant operands..
 		xWrite8(0xc5);
 		xWrite8(0xf8);

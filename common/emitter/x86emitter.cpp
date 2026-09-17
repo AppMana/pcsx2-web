@@ -664,16 +664,19 @@ namespace x86Emitter
 
 	__emitinline void xLEA(xRegister64 to, const xIndirectVoid& src, bool preserve_flags)
 	{
+		XTRACE(XOp::LEA, preserve_flags ? XRecord::PreserveFlags : 0, to, src);
 		EmitLeaMagic(to, src, preserve_flags);
 	}
 
 	__emitinline void xLEA(xRegister32 to, const xIndirectVoid& src, bool preserve_flags)
 	{
+		XTRACE(XOp::LEA, preserve_flags ? XRecord::PreserveFlags : 0, to, src);
 		EmitLeaMagic(to, src, preserve_flags);
 	}
 
 	__emitinline void xLEA(xRegister16 to, const xIndirectVoid& src, bool preserve_flags)
 	{
+		XTRACE(XOp::LEA, preserve_flags ? XRecord::PreserveFlags : 0, to, src);
 		xWrite8(0x66);
 		EmitLeaMagic(to, src, preserve_flags);
 	}
@@ -690,18 +693,21 @@ namespace x86Emitter
 	// =====================================================================================================
 	void xImpl_Test::operator()(const xRegisterInt& to, const xRegisterInt& from) const
 	{
+		XTRACE(XOp::TEST, 0, to, from);
 		pxAssert(to.GetOperandSize() == from.GetOperandSize());
 		xOpWrite(to.GetPrefix16(), to.Is8BitOp() ? 0x84 : 0x85, from, to);
 	}
 
 	void xImpl_Test::operator()(const xIndirect64orLess& dest, int imm) const
 	{
+		XTRACE(XOp::TEST, 0, dest, imm);
 		xOpWrite(dest.GetPrefix16(), dest.Is8BitOp() ? 0xf6 : 0xf7, 0, dest, dest.GetImmSize());
 		dest.xWriteImm(imm);
 	}
 
 	void xImpl_Test::operator()(const xRegisterInt& to, int imm) const
 	{
+		XTRACE(XOp::TEST, 0, to, imm);
 		if (to.IsAccumulator())
 		{
 			xOpAccWrite(to.GetPrefix16(), to.Is8BitOp() ? 0xa8 : 0xa9, 0, to);
@@ -715,16 +721,19 @@ namespace x86Emitter
 
 	void xImpl_BitScan::operator()(const xRegister16or32or64& to, const xRegister16or32or64& from) const
 	{
+		XTRACE((Opcode == 0xbc) ? XOp::BSF : XOp::BSR, 0, to, from);
 		pxAssert(to->GetOperandSize() == from->GetOperandSize());
 		xOpWrite0F(from->GetPrefix16(), Opcode, to, from);
 	}
 	void xImpl_BitScan::operator()(const xRegister16or32or64& to, const xIndirectVoid& sibsrc) const
 	{
+		XTRACE((Opcode == 0xbc) ? XOp::BSF : XOp::BSR, 0, to, sibsrc);
 		xOpWrite0F(to->GetPrefix16(), Opcode, to, sibsrc);
 	}
 
 	void xImpl_IncDec::operator()(const xRegisterInt& to) const
 	{
+		XTRACE(isDec ? XOp::DEC : XOp::INC, 0, to);
 		if (to.Is8BitOp())
 		{
 			u8 regfield = isDec ? 1 : 0;
@@ -738,31 +747,36 @@ namespace x86Emitter
 
 	void xImpl_IncDec::operator()(const xIndirect64orLess& to) const
 	{
+		XTRACE(isDec ? XOp::DEC : XOp::INC, 0, to);
 		to.prefix16();
 		xWrite8(to.Is8BitOp() ? 0xfe : 0xff);
 		EmitSibMagic(isDec ? 1 : 0, to);
 	}
 
-	void xImpl_DwordShift::operator()(const xRegister16or32or64& to, const xRegister16or32or64& from, const xRegisterCL& /* clreg */) const
+	void xImpl_DwordShift::operator()(const xRegister16or32or64& to, const xRegister16or32or64& from, const xRegisterCL& clreg) const
 	{
+		XTRACE((OpcodeBase == 0xa4) ? XOp::SHLD : XOp::SHRD, 0, to, from, clreg);
 		pxAssert(to->GetOperandSize() == from->GetOperandSize());
 		xOpWrite0F(from->GetPrefix16(), OpcodeBase + 1, to, from);
 	}
 
 	void xImpl_DwordShift::operator()(const xRegister16or32or64& to, const xRegister16or32or64& from, u8 shiftcnt) const
 	{
+		XTRACE((OpcodeBase == 0xa4) ? XOp::SHLD : XOp::SHRD, 0, to, from, shiftcnt);
 		pxAssert(to->GetOperandSize() == from->GetOperandSize());
 		if (shiftcnt != 0)
 			xOpWrite0F(from->GetPrefix16(), OpcodeBase, to, from, shiftcnt);
 	}
 
-	void xImpl_DwordShift::operator()(const xIndirectVoid& dest, const xRegister16or32or64& from, const xRegisterCL& /* clreg */) const
+	void xImpl_DwordShift::operator()(const xIndirectVoid& dest, const xRegister16or32or64& from, const xRegisterCL& clreg) const
 	{
+		XTRACE((OpcodeBase == 0xa4) ? XOp::SHLD : XOp::SHRD, 0, dest, from, clreg);
 		xOpWrite0F(from->GetPrefix16(), OpcodeBase + 1, from, dest);
 	}
 
 	void xImpl_DwordShift::operator()(const xIndirectVoid& dest, const xRegister16or32or64& from, u8 shiftcnt) const
 	{
+		XTRACE((OpcodeBase == 0xa4) ? XOp::SHLD : XOp::SHRD, 0, dest, from, shiftcnt);
 		if (shiftcnt != 0)
 			xOpWrite0F(from->GetPrefix16(), OpcodeBase, from, dest, shiftcnt);
 	}
@@ -776,6 +790,7 @@ namespace x86Emitter
 
 	__emitinline void xPOP(const xIndirectVoid& from)
 	{
+		XTRACE(XOp::POP, 0, from);
 		EmitRexImplicitlyWide(from);
 		xWrite8(0x8f);
 		EmitSibMagic(0, from);
@@ -783,6 +798,7 @@ namespace x86Emitter
 
 	__emitinline void xPUSH(const xIndirectVoid& from)
 	{
+		XTRACE(XOp::PUSH, 0, from);
 		EmitRexImplicitlyWide(from);
 		xWrite8(0xff);
 		EmitSibMagic(6, from);
@@ -790,12 +806,14 @@ namespace x86Emitter
 
 	__fi void xPOP(xRegister32or64 from)
 	{
+		XTRACE(XOp::POP, 0, from);
 		EmitRexImplicitlyWide(from);
 		xWrite8(0x58 | (from->Id & 7));
 	}
 
 	__fi void xPUSH(u32 imm)
 	{
+		XTRACE(XOp::PUSH, 0, imm);
 		if (is_s8(imm))
 		{
 			xWrite8(0x6a);
@@ -809,38 +827,40 @@ namespace x86Emitter
 	}
 	__fi void xPUSH(xRegister32or64 from)
 	{
+		XTRACE(XOp::PUSH, 0, from);
 		EmitRexImplicitlyWide(from);
 		xWrite8(0x50 | (from->Id & 7));
 	}
 
 	// pushes the EFLAGS register onto the stack
-	__fi void xPUSHFD() { xWrite8(0x9C); }
+	__fi void xPUSHFD() { XTRACE(XOp::PUSHFD); xWrite8(0x9C); }
 	// pops the EFLAGS register from the stack
-	__fi void xPOPFD() { xWrite8(0x9D); }
+	__fi void xPOPFD() { XTRACE(XOp::POPFD); xWrite8(0x9D); }
 
 
 	//////////////////////////////////////////////////////////////////////////////////////////
 	//
 
-	__fi void xLEAVE() { xWrite8(0xC9); }
-	__fi void xRET() { xWrite8(0xC3); }
-	__fi void xCBW() { xWrite16(0x9866); }
-	__fi void xCWD() { xWrite8(0x98); }
-	__fi void xCDQ() { xWrite8(0x99); }
-	__fi void xCWDE() { xWrite8(0x98); }
-	__fi void xCDQE() { xWrite16(0x9848); }
+	__fi void xLEAVE() { XTRACE(XOp::LEAVE); xWrite8(0xC9); }
+	__fi void xRET() { XTRACE(XOp::RET); xWrite8(0xC3); }
+	__fi void xCBW() { XTRACE(XOp::CBW); xWrite16(0x9866); }
+	__fi void xCWD() { XTRACE(XOp::CWD); xWrite8(0x98); }
+	__fi void xCDQ() { XTRACE(XOp::CDQ); xWrite8(0x99); }
+	__fi void xCWDE() { XTRACE(XOp::CWDE); xWrite8(0x98); }
+	__fi void xCDQE() { XTRACE(XOp::CDQE); xWrite16(0x9848); }
 
-	__fi void xLAHF() { xWrite8(0x9f); }
-	__fi void xSAHF() { xWrite8(0x9e); }
+	__fi void xLAHF() { XTRACE(XOp::LAHF); xWrite8(0x9f); }
+	__fi void xSAHF() { XTRACE(XOp::SAHF); xWrite8(0x9e); }
 
-	__fi void xSTC() { xWrite8(0xF9); }
-	__fi void xCLC() { xWrite8(0xF8); }
+	__fi void xSTC() { XTRACE(XOp::STC); xWrite8(0xF9); }
+	__fi void xCLC() { XTRACE(XOp::CLC); xWrite8(0xF8); }
 
 	// NOP 1-byte
-	__fi void xNOP() { xWrite8(0x90); }
+	__fi void xNOP() { XTRACE(XOp::NOP); xWrite8(0x90); }
 
 	__fi void xINT(u8 imm)
 	{
+		XTRACE(XOp::INT, 0, imm);
 		if (imm == 3)
 			xWrite8(0xcc);
 		else
@@ -850,10 +870,11 @@ namespace x86Emitter
 		}
 	}
 
-	__fi void xINTO() { xWrite8(0xce); }
+	__fi void xINTO() { XTRACE(XOp::INTO); xWrite8(0xce); }
 
 	__emitinline void xBSWAP(const xRegister32or64& to)
 	{
+		XTRACE(XOp::BSWAP, 0, to);
 		xWrite8(0x0F);
 		xWrite8(0xC8 | to->Id);
 	}

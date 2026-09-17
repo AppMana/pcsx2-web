@@ -20,21 +20,7 @@ namespace x86Emitter
 
 		// Special form for calling functions.  This form automatically resolves the
 		// correct displacement based on the size of the instruction being generated.
-		void operator()(const void* func) const
-		{
-			if (isJmp)
-				xJccKnownTarget(Jcc_Unconditional, (const void*)(uptr)func, false); // double cast to/from (uptr) needed to appease GCC
-			else
-			{
-				// calls are relative to the instruction after this one, and length is
-				// always 5 bytes (16 bit calls are bad mojo, so no bother to do special logic).
-
-				sptr dest = (sptr)func - ((sptr)xGetPtr() + 5);
-				pxAssertMsg(dest == (s32)dest, "Indirect jump is too far, must use a register!");
-				xWrite8(0xe8);
-				xWrite32(dest);
-			}
-		}
+		void operator()(const void* func) const;
 	};
 
 	// yes it is awful. Due to template code is in a header with a nice circular dep.

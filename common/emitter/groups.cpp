@@ -21,6 +21,21 @@
 
 namespace x86Emitter
 {
+	static XOp G1Op(G1Type t) { return static_cast<XOp>(static_cast<u16>(XOp::ADD) + static_cast<u16>(t)); }
+	static XOp G2Op(G2Type t) { return (t == G2Type_SAR) ? XOp::SAR : static_cast<XOp>(static_cast<u16>(XOp::ROL) + static_cast<u16>(t)); }
+	static XOp G3Op(G3Type t)
+	{
+		switch (t)
+		{
+			case G3Type_NOT: return XOp::NOT;
+			case G3Type_NEG: return XOp::NEG;
+			case G3Type_MUL: return XOp::UMUL;
+			case G3Type_iMUL: return XOp::IMUL;
+			case G3Type_DIV: return XOp::UDIV;
+			default: return XOp::IDIV;
+		}
+	}
+	static XOp G8Op(G8Type t) { return static_cast<XOp>(static_cast<u16>(XOp::BT) + static_cast<u16>(t) - static_cast<u16>(G8Type_BT)); }
 
 	// =====================================================================================================
 	//  Group 1 Instructions - ADD, SUB, ADC, etc.
@@ -31,6 +46,7 @@ namespace x86Emitter
 	// with one of the other overloads).
 	void xImpl_Group1::operator()(const xIndirect64orLess& sibdest, int imm) const
 	{
+		XTRACE(G1Op(InstType), 0, sibdest, imm);
 		if (sibdest.Is8BitOp())
 		{
 			xOpWrite(sibdest.GetPrefix16(), 0x80, InstType, sibdest, 1);
@@ -51,6 +67,7 @@ namespace x86Emitter
 
 	void xImpl_Group1::operator()(const xRegisterInt& to, const xRegisterInt& from) const
 	{
+		XTRACE(G1Op(InstType), 0, to, from);
 		pxAssert(to.GetOperandSize() == from.GetOperandSize());
 
 		u8 opcode = (to.Is8BitOp() ? 0 : 1) | (InstType << 3);
@@ -59,18 +76,21 @@ namespace x86Emitter
 
 	void xImpl_Group1::operator()(const xIndirectVoid& sibdest, const xRegisterInt& from) const
 	{
+		XTRACE(G1Op(InstType), 0, sibdest, from);
 		u8 opcode = (from.Is8BitOp() ? 0 : 1) | (InstType << 3);
 		xOpWrite(from.GetPrefix16(), opcode, from, sibdest);
 	}
 
 	void xImpl_Group1::operator()(const xRegisterInt& to, const xIndirectVoid& sibsrc) const
 	{
+		XTRACE(G1Op(InstType), 0, to, sibsrc);
 		u8 opcode = (to.Is8BitOp() ? 2 : 3) | (InstType << 3);
 		xOpWrite(to.GetPrefix16(), opcode, to, sibsrc);
 	}
 
 	void xImpl_Group1::operator()(const xRegisterInt& to, int imm) const
 	{
+		XTRACE(G1Op(InstType), 0, to, imm);
 		if (!to.Is8BitOp() && is_s8(imm))
 		{
 			xOpWrite(to.GetPrefix16(), 0x83, InstType, to);
@@ -97,13 +117,15 @@ namespace x86Emitter
 	//  Group 2 Instructions - SHR, SHL, etc.
 	// =====================================================================================================
 
-	void xImpl_Group2::operator()(const xRegisterInt& to, const xRegisterCL& /* from */) const
+	void xImpl_Group2::operator()(const xRegisterInt& to, const xRegisterCL& from) const
 	{
+		XTRACE(G2Op(InstType), 0, to, from);
 		xOpWrite(to.GetPrefix16(), to.Is8BitOp() ? 0xd2 : 0xd3, InstType, to);
 	}
 
 	void xImpl_Group2::operator()(const xRegisterInt& to, u8 imm) const
 	{
+		XTRACE(G2Op(InstType), 0, to, imm);
 		if (imm == 0)
 			return;
 
@@ -119,13 +141,15 @@ namespace x86Emitter
 		}
 	}
 
-	void xImpl_Group2::operator()(const xIndirect64orLess& sibdest, const xRegisterCL& /* from */) const
+	void xImpl_Group2::operator()(const xIndirect64orLess& sibdest, const xRegisterCL& from) const
 	{
+		XTRACE(G2Op(InstType), 0, sibdest, from);
 		xOpWrite(sibdest.GetPrefix16(), sibdest.Is8BitOp() ? 0xd2 : 0xd3, InstType, sibdest);
 	}
 
 	void xImpl_Group2::operator()(const xIndirect64orLess& sibdest, u8 imm) const
 	{
+		XTRACE(G2Op(InstType), 0, sibdest, imm);
 		if (imm == 0)
 			return;
 
@@ -159,11 +183,13 @@ namespace x86Emitter
 
 	void xImpl_Group3::operator()(const xRegisterInt& from) const
 	{
+		XTRACE(G3Op(InstType), 0, from);
 		xOpWrite(from.GetPrefix16(), from.Is8BitOp() ? 0xf6 : 0xf7, InstType, from);
 	}
 
 	void xImpl_Group3::operator()(const xIndirect64orLess& from) const
 	{
+		XTRACE(G3Op(InstType), 0, from);
 		xOpWrite(from.GetPrefix16(), from.Is8BitOp() ? 0xf6 : 0xf7, InstType, from);
 	}
 
@@ -180,15 +206,15 @@ namespace x86Emitter
 			param1.xWriteImm(imm);
 	}
 
-	void xImpl_iMul::operator()(const xRegister32& to, const xRegister32& from) const { xOpWrite0F(0xaf, to, from); }
-	void xImpl_iMul::operator()(const xRegister32& to, const xIndirectVoid& src) const { xOpWrite0F(0xaf, to, src); }
-	void xImpl_iMul::operator()(const xRegister16& to, const xRegister16& from) const { xOpWrite0F(0x66, 0xaf, to, from); }
-	void xImpl_iMul::operator()(const xRegister16& to, const xIndirectVoid& src) const { xOpWrite0F(0x66, 0xaf, to, src); }
+	void xImpl_iMul::operator()(const xRegister32& to, const xRegister32& from) const { XTRACE(XOp::IMUL2, 0, to, from); xOpWrite0F(0xaf, to, from); }
+	void xImpl_iMul::operator()(const xRegister32& to, const xIndirectVoid& src) const { XTRACE(XOp::IMUL2, 0, to, src); xOpWrite0F(0xaf, to, src); }
+	void xImpl_iMul::operator()(const xRegister16& to, const xRegister16& from) const { XTRACE(XOp::IMUL2, 0, to, from); xOpWrite0F(0x66, 0xaf, to, from); }
+	void xImpl_iMul::operator()(const xRegister16& to, const xIndirectVoid& src) const { XTRACE(XOp::IMUL2, 0, to, src); xOpWrite0F(0x66, 0xaf, to, src); }
 
-	void xImpl_iMul::operator()(const xRegister32& to, const xRegister32& from, s32 imm) const { _imul_ImmStyle(to, from, imm); }
-	void xImpl_iMul::operator()(const xRegister32& to, const xIndirectVoid& from, s32 imm) const { _imul_ImmStyle(to, from, imm); }
-	void xImpl_iMul::operator()(const xRegister16& to, const xRegister16& from, s16 imm) const { _imul_ImmStyle(to, from, imm); }
-	void xImpl_iMul::operator()(const xRegister16& to, const xIndirectVoid& from, s16 imm) const { _imul_ImmStyle(to, from, imm); }
+	void xImpl_iMul::operator()(const xRegister32& to, const xRegister32& from, s32 imm) const { XTRACE(XOp::IMUL3, 0, to, from, imm); _imul_ImmStyle(to, from, imm); }
+	void xImpl_iMul::operator()(const xRegister32& to, const xIndirectVoid& from, s32 imm) const { XTRACE(XOp::IMUL3, 0, to, from, imm); _imul_ImmStyle(to, from, imm); }
+	void xImpl_iMul::operator()(const xRegister16& to, const xRegister16& from, s16 imm) const { XTRACE(XOp::IMUL3, 0, to, from, imm); _imul_ImmStyle(to, from, imm); }
+	void xImpl_iMul::operator()(const xRegister16& to, const xIndirectVoid& from, s16 imm) const { XTRACE(XOp::IMUL3, 0, to, from, imm); _imul_ImmStyle(to, from, imm); }
 
 
 	// =====================================================================================================
@@ -197,20 +223,23 @@ namespace x86Emitter
 
 	void xImpl_Group8::operator()(const xRegister16or32or64& bitbase, const xRegister16or32or64& bitoffset) const
 	{
+		XTRACE(G8Op(InstType), 0, bitbase, bitoffset);
 		pxAssert(bitbase->GetOperandSize() == bitoffset->GetOperandSize());
 		xOpWrite0F(bitbase->GetPrefix16(), 0xa3 | (InstType << 3), bitbase, bitoffset);
 	}
-	void xImpl_Group8::operator()(const xIndirect64& bitbase, u8 bitoffset) const { xOpWrite0F(0xba, InstType, bitbase, bitoffset); }
-	void xImpl_Group8::operator()(const xIndirect32& bitbase, u8 bitoffset) const { xOpWrite0F(0xba, InstType, bitbase, bitoffset); }
-	void xImpl_Group8::operator()(const xIndirect16& bitbase, u8 bitoffset) const { xOpWrite0F(0x66, 0xba, InstType, bitbase, bitoffset); }
+	void xImpl_Group8::operator()(const xIndirect64& bitbase, u8 bitoffset) const { XTRACE(G8Op(InstType), 0, bitbase, bitoffset); xOpWrite0F(0xba, InstType, bitbase, bitoffset); }
+	void xImpl_Group8::operator()(const xIndirect32& bitbase, u8 bitoffset) const { XTRACE(G8Op(InstType), 0, bitbase, bitoffset); xOpWrite0F(0xba, InstType, bitbase, bitoffset); }
+	void xImpl_Group8::operator()(const xIndirect16& bitbase, u8 bitoffset) const { XTRACE(G8Op(InstType), 0, bitbase, bitoffset); xOpWrite0F(0x66, 0xba, InstType, bitbase, bitoffset); }
 
 	void xImpl_Group8::operator()(const xRegister16or32or64& bitbase, u8 bitoffset) const
 	{
+		XTRACE(G8Op(InstType), 0, bitbase, bitoffset);
 		xOpWrite0F(bitbase->GetPrefix16(), 0xba, InstType, bitbase, bitoffset);
 	}
 
 	void xImpl_Group8::operator()(const xIndirectVoid& bitbase, const xRegister16or32or64& bitoffset) const
 	{
+		XTRACE(G8Op(InstType), 0, bitbase, bitoffset);
 		xOpWrite0F(bitoffset->GetPrefix16(), 0xa3 | (InstType << 3), bitoffset, bitbase);
 	}
 

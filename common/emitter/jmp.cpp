@@ -23,11 +23,13 @@ namespace x86Emitter
 
 	void xImpl_JmpCall::operator()(const xAddressReg& absreg) const
 	{
+		XTRACE(isJmp ? XOp::JMP : XOp::CALL, 0, absreg);
 		// Jumps are always wide and don't need the rex.W
 		xOpWrite(0, 0xff, isJmp ? 4 : 2, absreg.GetNonWide());
 	}
 	void xImpl_JmpCall::operator()(const xIndirectNative& src) const
 	{
+		XTRACE(isJmp ? XOp::JMP : XOp::CALL, 0, src);
 		// Jumps are always wide and don't need the rex.W
 		EmitRex(0, xIndirect32(src.Base, src.Index, 1, 0));
 		xWrite8(0xff);
@@ -35,6 +37,28 @@ namespace x86Emitter
 	}
 
 
+	// Special form for calling functions.  This form automatically resolves the
+	// correct displacement based on the size of the instruction being generated.
+	void xImpl_JmpCall::operator()(const void* func) const
+	{
+		if (isJmp)
+		{
+			XTRACE(XOp::JMP, 0, xtrace::CodePtr{func});
+			xJccKnownTarget(Jcc_Unconditional, (const void*)(uptr)func, false); // double cast to/from (uptr) needed to appease GCC
+		}
+		else
+		{
+			XTRACE(XOp::CALL, 0, xtrace::FuncPtr{func});
+
+			// calls are relative to the instruction after this one, and length is
+			// always 5 bytes (16 bit calls are bad mojo, so no bother to do special logic).
+
+			sptr dest = (sptr)func - ((sptr)xGetPtr() + 5);
+			pxAssertMsg(dest == (s32)dest, "Indirect jump is too far, must use a register!");
+			xWrite8(0xe8);
+			xWrite32(dest);
+		}
+	}
 
 	template <typename Reg1, typename Reg2>
 	void prepareRegsForFastcall(const Reg1& a1, const Reg2& a2)
@@ -66,6 +90,7 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const void* f, const xRegister32& a1, const xRegister32& a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1, a2);
 		prepareRegsForFastcall(a1, a2);
 		uptr disp = ((uptr)xGetPtr() + 5) - (uptr)f;
 		if ((sptr)disp == (s32)disp)
@@ -81,6 +106,7 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const void* f, const xRegisterLong& a1, const xRegisterLong& a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1, a2);
 		prepareRegsForFastcall(a1, a2);
 		uptr disp = ((uptr)xGetPtr() + 5) - (uptr)f;
 		if ((sptr)disp == (s32)disp)
@@ -96,6 +122,7 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const void* f, u32 a1, const xRegisterLong& a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1, a2);
 		if (!a2.IsEmpty())
 		{
 			xMOV(arg2reg, a2);
@@ -106,12 +133,14 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const void* f, void* a1) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, xtrace::Addr{a1});
 		xLEA(arg1reg, ptr[a1]);
 		(*this)(f, arg1reg, arg2reg);
 	}
 
 	void xImpl_FastCall::operator()(const void* f, u32 a1, const xRegister32& a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1, a2);
 		if (!a2.IsEmpty())
 		{
 			xMOV(arg2regd, a2);
@@ -122,12 +151,14 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const void* f, const xIndirect32& a1) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1);
 		xMOV(arg1regd, a1);
 		(*this)(f, arg1regd);
 	}
 
 	void xImpl_FastCall::operator()(const void* f, u32 a1, u32 a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, xtrace::FuncPtr{f}, a1, a2);
 		xMOV(arg1regd, a1);
 		xMOV(arg2regd, a2);
 		(*this)(f, arg1regd, arg2regd);
@@ -135,6 +166,7 @@ namespace x86Emitter
 
 	void xImpl_FastCall::operator()(const xIndirectNative& f, const xRegisterLong& a1, const xRegisterLong& a2) const
 	{
+		XTRACE(XOp::FASTCALL, 0, f, a1, a2);
 		prepareRegsForFastcall(a1, a2);
 		xCALL(f);
 	}
@@ -146,6 +178,19 @@ namespace x86Emitter
 	// or in other words *(retval+1) )
 	__emitinline s32* xJcc32(JccComparisonType comparison, s32 displacement)
 	{
+#ifdef X86EMITTER_XTRACE
+		if (xtrace::s_enabled && xtrace::s_depth == 0)
+		{
+			const s32* slot = reinterpret_cast<const s32*>(xGetPtr() + ((comparison == Jcc_Unconditional) ? 1 : 2));
+			const XOperand ops[] = {xtrace::Conv(comparison), [slot]() {
+				XOperand op;
+				op.kind = static_cast<u8>(XOperandKind::Slot);
+				op.index = xtrace::NewSlot(slot);
+				return op;
+			}()};
+			xtrace::Record(XOp::JCC_LINK, 0, ops, 2);
+		}
+#endif
 		if (comparison == Jcc_Unconditional)
 			xWrite8(0xe9);
 		else
@@ -208,6 +253,7 @@ namespace x86Emitter
 	// a jump (either 8 or 32 bit) is generated.
 	__emitinline void xJcc(JccComparisonType comparison, const void* target)
 	{
+		XTRACE(XOp::JCC, 0, comparison, xtrace::CodePtr{target});
 		xJccKnownTarget(comparison, target, false);
 	}
 
@@ -219,6 +265,14 @@ namespace x86Emitter
 		BasePtr = (s8*)xGetPtr() +
 				  ((opsize == 1) ? 2 : // j8's are always 2 bytes.
                                    ((cctype == Jcc_Unconditional) ? 5 : 6)); // j32's are either 5 or 6 bytes
+
+#ifdef X86EMITTER_XTRACE
+		if (xtrace::s_enabled && xtrace::s_depth == 0)
+		{
+			const XOperand ops[] = {xtrace::Conv(cctype), xtrace::Conv(xtrace::Label{xtrace::NewLabel(BasePtr)})};
+			xtrace::Record(XOp::JCC_FWD, 0, ops, 2);
+		}
+#endif
 
 		if (opsize == 1)
 			xWrite8((cctype == Jcc_Unconditional) ? 0xeb : (0x70 | cctype));
@@ -239,6 +293,14 @@ namespace x86Emitter
 	void xForwardJumpBase::_setTarget(uint opsize) const
 	{
 		pxAssertMsg(BasePtr != NULL, "");
+
+#ifdef X86EMITTER_XTRACE
+		if (xtrace::s_enabled && xtrace::s_depth == 0)
+		{
+			const XOperand ops[] = {xtrace::Conv(xtrace::Label{xtrace::FindLabel(BasePtr)})};
+			xtrace::Record(XOp::LABEL, 0, ops, 1);
+		}
+#endif
 
 		sptr displacement = (sptr)xGetPtr() - (sptr)BasePtr;
 		if (opsize == 1)

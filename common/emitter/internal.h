@@ -5,6 +5,9 @@
 
 #include "common/emitter/x86types.h"
 #include "common/emitter/instructions.h"
+#include "common/emitter/xtrace.h"
+
+#include <bit>
 
 namespace x86Emitter
 {
@@ -193,23 +196,32 @@ namespace x86Emitter
 	void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const xRegisterBase& src2, const xRegisterBase& src3);
 	void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const xIndirectVoid& src2, const xRegisterBase& src3);
 
+	__emitinline static xtrace::Imm SimdInfoBits(SIMDInstructionInfo info)
+	{
+		return xtrace::Imm{static_cast<s64>(std::bit_cast<u32>(info))};
+	}
+
 	__emitinline static void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1)
 	{
+		XTRACE(XOp::SIMD2, 0, SimdInfoBits(info), dst, src1);
 		EmitSIMDImpl(info, dst, src1, 0);
 	}
 	__emitinline static void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, u8 imm)
 	{
+		XTRACE(XOp::SIMD2I, 0, SimdInfoBits(info), dst, src1, imm);
 		EmitSIMDImpl(info, dst, src1, 1);
 		xWrite8(imm);
 	}
 	template <typename S2>
 	__emitinline static void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const S2& src2)
 	{
+		XTRACE(XOp::SIMD3, 0, SimdInfoBits(info), dst, src1, src2);
 		EmitSIMDImpl(info, dst, src1, src2, 0);
 	}
 	template <typename S2>
 	__emitinline static void EmitSIMD(SIMDInstructionInfo info, const xRegisterBase& dst, const xRegisterBase& src1, const S2& src2, u8 imm)
 	{
+		XTRACE(XOp::SIMD3I, 0, SimdInfoBits(info), dst, src1, src2, imm);
 		EmitSIMDImpl(info, dst, src1, src2, 1);
 		xWrite8(imm);
 	}

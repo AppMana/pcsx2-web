@@ -11,6 +11,7 @@ if(ARCH_X86)
 		x86emitter/codegen_tests.cpp
 		x86emitter/codegen_tests.h
 		x86emitter/codegen_tests_main.cpp
+		x86emitter/xtrace_tests.cpp
 	)
 endif()
 

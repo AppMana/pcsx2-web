@@ -101,6 +101,7 @@ set(emitter_x86_sources
 	emitter/movs.cpp
 	emitter/simd.cpp
 	emitter/x86emitter.cpp
+	emitter/xtrace.cpp
 )
 
 if(ARCH_X86)
@@ -132,6 +133,8 @@ if(ARCH_X86 OR ARCH_WASM32)
 		emitter/legacy_types.h
 		emitter/x86emitter.h
 		emitter/x86types.h
+		emitter/xtrace.h
+		emitter/wasm/WasmIR.h
 	)
 endif()
 

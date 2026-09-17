@@ -24,6 +24,7 @@ namespace x86Emitter
 
 	void xImpl_Mov::operator()(const xRegisterInt& to, const xRegisterInt& from) const
 	{
+		XTRACE(XOp::MOV, 0, to, from);
 		pxAssert(to.GetOperandSize() == from.GetOperandSize());
 
 		if (to == from)
@@ -34,6 +35,7 @@ namespace x86Emitter
 
 	void xImpl_Mov::operator()(const xIndirectVoid& dest, const xRegisterInt& from) const
 	{
+		XTRACE(XOp::MOV, 0, dest, from);
 		// mov eax has a special from when writing directly to a DISP32 address
 		// (sans any register index/base registers).
 
@@ -42,6 +44,7 @@ namespace x86Emitter
 
 	void xImpl_Mov::operator()(const xRegisterInt& to, const xIndirectVoid& src) const
 	{
+		XTRACE(XOp::MOV, 0, to, src);
 		// mov eax has a special from when reading directly from a DISP32 address
 		// (sans any register index/base registers).
 
@@ -50,6 +53,7 @@ namespace x86Emitter
 
 	void xImpl_Mov::operator()(const xIndirect64orLess& dest, sptr imm) const
 	{
+		XTRACE(XOp::MOV, 0, dest, imm);
 		switch (dest.GetOperandSize())
 		{
 			case 1:
@@ -75,6 +79,7 @@ namespace x86Emitter
 	//   the flags (namely replacing mov reg,0 with xor).
 	void xImpl_Mov::operator()(const xRegisterInt& to, sptr imm, bool preserve_flags) const
 	{
+		XTRACE(XOp::MOV, preserve_flags ? XRecord::PreserveFlags : 0, to, imm);
 		switch (to.GetOperandSize())
 		{
 			case 1:
@@ -114,6 +119,7 @@ namespace x86Emitter
 
 	void xImpl_MovImm64::operator()(const xRegister64& to, s64 imm, bool preserve_flags) const
 	{
+		XTRACE(XOp::MOV64, preserve_flags ? XRecord::PreserveFlags : 0, to, imm);
 		if (imm == (u32)imm || imm == (s32)imm)
 		{
 			xMOV(to, imm, preserve_flags);
@@ -141,6 +147,7 @@ namespace x86Emitter
 
 	void xImpl_CMov::operator()(const xRegister16or32or64& to, const xRegister16or32or64& from) const
 	{
+		XTRACE(XOp::CMOV, 0, ccType, to, from);
 		pxAssert(to->GetOperandSize() == from->GetOperandSize());
 		ccSane();
 		xOpWrite0F(to->GetPrefix16(), 0x40 | ccType, to, from);
@@ -148,6 +155,7 @@ namespace x86Emitter
 
 	void xImpl_CMov::operator()(const xRegister16or32or64& to, const xIndirectVoid& sibsrc) const
 	{
+		XTRACE(XOp::CMOV, 0, ccType, to, sibsrc);
 		ccSane();
 		xOpWrite0F(to->GetPrefix16(), 0x40 | ccType, to, sibsrc);
 	}
@@ -157,11 +165,13 @@ namespace x86Emitter
 
 	void xImpl_Set::operator()(const xRegister8& to) const
 	{
+		XTRACE(XOp::SETCC, 0, ccType, to);
 		ccSane();
 		xOpWrite0F(0x90 | ccType, 0, to);
 	}
 	void xImpl_Set::operator()(const xIndirect8& dest) const
 	{
+		XTRACE(XOp::SETCC, 0, ccType, dest);
 		ccSane();
 		xOpWrite0F(0x90 | ccType, 0, dest);
 	}
@@ -169,6 +179,7 @@ namespace x86Emitter
 
 	void xImpl_MovExtend::operator()(const xRegister16or32or64& to, const xRegister8& from) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, from);
 		EbpAssert();
 		xOpWrite0F(
 			(to->GetOperandSize() == 2) ? 0x66 : 0,
@@ -178,6 +189,7 @@ namespace x86Emitter
 
 	void xImpl_MovExtend::operator()(const xRegister16or32or64& to, const xIndirect8& sibsrc) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, sibsrc);
 		EbpAssert();
 		xOpWrite0F(
 			(to->GetOperandSize() == 2) ? 0x66 : 0,
@@ -187,18 +199,21 @@ namespace x86Emitter
 
 	void xImpl_MovExtend::operator()(const xRegister32or64& to, const xRegister16& from) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, from);
 		EbpAssert();
 		xOpWrite0F(SignExtend ? 0xbf : 0xb7, to, from);
 	}
 
 	void xImpl_MovExtend::operator()(const xRegister32or64& to, const xIndirect16& sibsrc) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, sibsrc);
 		EbpAssert();
 		xOpWrite0F(SignExtend ? 0xbf : 0xb7, to, sibsrc);
 	}
 
 	void xImpl_MovExtend::operator()(const xRegister64& to, const xRegister32& from) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, from);
 		EbpAssert();
 		pxAssertMsg(SignExtend, "Use mov for 64-bit movzx");
 		xOpWrite(0, 0x63, to, from);
@@ -206,6 +221,7 @@ namespace x86Emitter
 
 	void xImpl_MovExtend::operator()(const xRegister64& to, const xIndirect32& sibsrc) const
 	{
+		XTRACE(SignExtend ? XOp::MOVSX : XOp::MOVZX, 0, to, sibsrc);
 		EbpAssert();
 		pxAssertMsg(SignExtend, "Use mov for 64-bit movzx");
 		xOpWrite(0, 0x63, to, sibsrc);

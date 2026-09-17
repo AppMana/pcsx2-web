@@ -49,8 +49,36 @@ namespace x86Emitter
 //////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////
 
+#ifdef X86EMITTER_XTRACE
+static void TraceLegacyJump(int cond, u8 flags, const void* label_key)
+{
+	if (!xtrace::s_enabled || xtrace::s_depth != 0)
+		return;
+	const XOperand ops[] = {xtrace::Conv(static_cast<JccComparisonType>(cond)), xtrace::Conv(xtrace::Label{xtrace::NewLabel(label_key)})};
+	xtrace::Record(XOp::JCC_FWD, flags, ops, 2);
+}
+
+static void TraceLegacyLabel(const void* label_key)
+{
+	if (!xtrace::s_enabled || xtrace::s_depth != 0)
+		return;
+	const XOperand ops[] = {xtrace::Conv(xtrace::Label{xtrace::FindLabel(label_key)})};
+	xtrace::Record(XOp::LABEL, 0, ops, 1);
+}
+#else
+#define TraceLegacyJump(cond, flags, key) \
+	do \
+	{ \
+	} while (0)
+#define TraceLegacyLabel(key) \
+	do \
+	{ \
+	} while (0)
+#endif
+
 emitterT u8* J8Rel(int cc, int to)
 {
+	TraceLegacyJump(cc - 0x70, XRecord::LegacyJ8, x86Ptr + 1);
 	xWrite8(cc);
 	xWrite8(to);
 	return (u8*)(x86Ptr - 1);
@@ -66,6 +94,7 @@ emitterT u16* J16Rel(int cc, u32 to)
 
 emitterT u32* J32Rel(int cc, u32 to)
 {
+	TraceLegacyJump(cc - 0x80, XRecord::LegacyJ32, x86Ptr + 2);
 	xWrite8(0x0F);
 	xWrite8(cc);
 	xWrite32(to);
@@ -86,6 +115,7 @@ emitterT void x86SetPtr(u8* ptr)
 //
 void x86SetJ8(u8* j8)
 {
+	TraceLegacyLabel(j8);
 	u32 jump = (x86Ptr - j8) - 1;
 
 	if (jump > 0x7f)
@@ -98,6 +128,7 @@ void x86SetJ8(u8* j8)
 
 void x86SetJ8A(u8* j8)
 {
+	TraceLegacyLabel(j8);
 	u32 jump = (x86Ptr - j8) - 1;
 
 	if (jump > 0x7f)
@@ -124,14 +155,16 @@ void x86SetJ8A(u8* j8)
 ////////////////////////////////////////////////////
 emitterT void x86SetJ32(u32* j32)
 {
+	TraceLegacyLabel(j32);
 	*j32 = (x86Ptr - (u8*)j32) - 4;
 }
 
 emitterT void x86SetJ32A(u32* j32)
 {
+	TraceLegacyLabel(j32);
 	while ((uptr)x86Ptr & 0xf)
 		*x86Ptr++ = 0x90;
-	x86SetJ32(j32);
+	*j32 = (x86Ptr - (u8*)j32) - 4;
 }
 
 /********************/
@@ -145,6 +178,7 @@ emitterT void x86SetJ32A(u32* j32)
 /* jmp rel8 */
 emitterT u8* JMP8(u8 to)
 {
+	TraceLegacyJump(Jcc_Unconditional, XRecord::LegacyJ8, x86Ptr + 1);
 	xWrite8(0xEB);
 	xWrite8(to);
 	return x86Ptr - 1;
@@ -153,6 +187,7 @@ emitterT u8* JMP8(u8 to)
 /* jmp rel32 */
 emitterT u32* JMP32(uptr to)
 {
+	TraceLegacyJump(Jcc_Unconditional, XRecord::LegacyJ32, x86Ptr + 1);
 	assert((sptr)to <= 0x7fffffff && (sptr)to >= -0x7fffffff);
 	xWrite8(0xE9);
 	xWrite32(to);
